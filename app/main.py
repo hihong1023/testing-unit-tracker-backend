@@ -122,6 +122,7 @@ STEPS: List[TestStep] = [
     TestStep(id=10, name="EMI/EMC Test", order=10),
     TestStep(id=11, name="Post-EMI/EMC Physical Layer Test", order=11),
     TestStep(id=12, name="BGAN Network Emulator Test", order=12),
+    TestStep(id=13, name="Over-the-Air Test", order=13),
 ]
 
 STEP_BY_ID: Dict[int, TestStep] = {s.id: s for s in STEPS}
@@ -1027,4 +1028,5 @@ def export_step_zip(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
