@@ -68,8 +68,8 @@ def require_role(required_role: str):
     return dep
 
 # Preset accounts
-PRESET_TESTERS = ["tester1", "tester2", "tester3"]
-PRESET_SUPERVISORS = ["supervisor"]
+PRESET_TESTERS = ["alex","bryan", "ge fan","jimmy", "kae","krish", "nicholas" ,  "sunny",  "yew meng", "yubo",  "zhen yang",  ]
+PRESET_SUPERVISORS = ["kian siang", "alban","hai hong"]
 
 @app.post("/auth/login", response_model=LoginResponse)
 def login(body: LoginRequest):
@@ -1027,3 +1027,4 @@ def export_step_zip(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
