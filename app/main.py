@@ -24,7 +24,6 @@ app = FastAPI(title="Testing Unit Tracker")
 def on_startup():
     init_db()
     
-from fastapi.middleware.cors import CORSMiddleware
 
 origins = [
     "https://proud-sand-0ed440210.3.azurestaticapps.net",
@@ -44,10 +43,6 @@ app.add_middleware(
 # Auth (simple token-based)
 # -------------------------
 
-class User(BaseModel):
-    id: str
-    name: str
-    role: str  # "supervisor" or "tester"
 
 class LoginRequest(BaseModel):
     name: str  # we only send the username from frontend now
@@ -78,6 +73,12 @@ async def get_current_user(
 
     return User(id=token_row.user_id, name=token_row.name, role=token_row.role)
 
+def require_role(required_role: str):
+    async def dep(user: User = Depends(get_current_user)) -> User:
+        if user.role != required_role:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return user
+    return dep
 
 # Preset accounts
 PRESET_TESTERS = ["alex","bryan", "ge fan","jimmy", "kae","krish", "nicholas" ,  "sunny",  "yew meng", "yubo",  "zhen yang",  ]
@@ -125,11 +126,6 @@ def list_testers(supervisor: User = Depends(require_role("supervisor"))):
 # Static Test Steps
 # -------------------------
 
-class TestStep(BaseModel):
-    id: int
-    name: str
-    order: int
-    required: bool = True
 
 STEPS: List[TestStep] = [
     TestStep(id=1, name="Connectivity Test", order=1),
@@ -154,72 +150,8 @@ STEP_IDS_ORDERED = [s.id for s in sorted(STEPS, key=lambda s: s.order)]
 def list_steps(user: User = Depends(get_current_user)):
     return STEPS
 
-# -------------------------
-# Data Models (in-memory)
-# -------------------------
 
-class Unit(BaseModel):
-    id: str
-    sku: Optional[str] = None
-    rev: Optional[str] = None
-    lot: Optional[str] = None
-    status: str = "IN_PROGRESS"  # or COMPLETED
-    current_step_id: Optional[int] = None
-
-class Assignment(BaseModel):
-    id: str
-    unit_id: str
-    step_id: int
-    tester_id: Optional[str] = None
-    start_at: Optional[datetime] = None
-    end_at: Optional[datetime] = None
-    status: str = "PENDING"  # PENDING/RUNNING/DONE
-    prev_passed: bool = False
-
-class Result(BaseModel):
-    id: str
-    unit_id: str
-    step_id: int
-    passed: bool
-    metrics: Dict[str, Any]
-    files: List[str] = []
-    submitted_by: Optional[str] = None
-    finished_at: datetime
-
-class FileMeta(BaseModel):
-    id: str
-    unit_id: str
-    step_id: int
-    result_id: str
-    orig_name: str
-    stored_name: str
-    stored_path: str
-    sha256: str
-    size: int
-
-class FileMetaOut(BaseModel):
-    id: str
-    unit_id: str
-    step_id: int
-    result_id: str
-    orig_name: str
-
-# === NOTIFICATIONS: model & storage ===================
-
-class Notification(BaseModel):
-    id: str
-    tester_id: str
-    unit_id: str
-    from_step_id: int
-    to_step_id: int
-    message: str
-    created_at: datetime
-    read: bool = False
-
-
-
-
-
+'''
 @app.get("/results/{result_id}/files", response_model=List[FileMetaOut])
 def list_result_files(result_id: str, user: User = Depends(get_current_user)):
     res = RESULTS.get(result_id)
@@ -274,7 +206,8 @@ def delete_file(file_id: str, supervisor: User = Depends(require_role("superviso
     del FILES[file_id]
 
     return {"ok": True}
-
+'''
+    
 # -------------------------
 # Units Endpoints
 # -------------------------
@@ -334,7 +267,7 @@ def create_unit(
     session.refresh(unit)
     return unit
 
-
+'''
 @app.delete("/units/{unit_id}")
 def delete_unit(
     unit_id: str,
@@ -357,6 +290,7 @@ def delete_unit(
 
     del UNITS[unit_id]
     return {"ok": True}
+'''
 
 @app.get("/units/summary", response_model=List[UnitSummary])
 def get_units_summary(
@@ -412,7 +346,7 @@ def get_units_summary(
 
     return summaries
 
-
+'''
 @app.get("/units/{unit_id}/details", response_model=UnitDetails)
 def get_unit_details(unit_id: str, user: User = Depends(get_current_user)):
     unit = UNITS.get(unit_id)
@@ -422,6 +356,7 @@ def get_unit_details(unit_id: str, user: User = Depends(get_current_user)):
     assignments.sort(key=lambda a: STEP_BY_ID[a.step_id].order)
     results = [r for r in RESULTS.values() if r.unit_id == unit_id]
     return UnitDetails(unit=unit, assignments=assignments, results=results)
+'''
 
 # -------------------------
 # Tester Queue & Upcoming
@@ -446,6 +381,7 @@ def calibration_ok_stub(
 ) -> Tuple[bool, Optional[str]]:
     return True, None
 
+'''
 @app.get("/tester/queue", response_model=TesterQueueResponse)
 def get_tester_queue(
     tester_id: str,
@@ -519,7 +455,7 @@ def get_tester_assignments(
 
     return out
 
-
+'''
 
 # === NOTIFICATIONS: endpoints ========================
 
@@ -797,7 +733,7 @@ def create_or_update_result(
     return ResultOut(**res.dict())
 
 
-
+'''
 @app.delete("/results/{unit_id}/{step_id}")
 def delete_result_for_step(
     unit_id: str,
@@ -832,6 +768,7 @@ def delete_result_for_step(
                     break
 
     return {"ok": True, "deleted": True}
+'''
 
 # Storage config
 STORAGE_ROOT = Path("storage")
@@ -955,7 +892,7 @@ class DuplicateRequest(BaseModel):
     new_unit_ids: List[str]
     day_shift: int = 1
 
-
+'''
 @app.post("/schedule/duplicate")
 def duplicate_schedule(
     body: DuplicateRequest,
@@ -1009,7 +946,7 @@ def duplicate_schedule(
         created_units.append(new_unit)
 
     return {"ok": True, "created_units": created_units}
-
+'''
 
 class AssignmentPatch(BaseModel):
     tester_id: Optional[str] = None
@@ -1033,7 +970,7 @@ def overlaps(
     # inclusive overlap: [a_start, a_end] vs [b_start, b_end]
     return (a_start <= b_end) and (b_start <= a_end)
 
-
+'''
 @app.get("/assignments/schedule", response_model=List[Assignment])
 def get_schedule(supervisor: User = Depends(require_role("supervisor"))):
     # Just return all assignments; frontend can compute conflicts or show Gantt
@@ -1110,6 +1047,7 @@ def sync_steps(supervisor: User = Depends(require_role("supervisor"))):
             ASSIGNMENTS[new_a.id] = new_a
 
     return {"ok": True}
+'''
 
 # -------------------------
 # Evidence Export (ZIP)
@@ -1133,6 +1071,7 @@ def sanitize_step_folder(name: str) -> str:
     name = name.strip().strip(".")
     return name or "step"
 
+'''
 @app.get("/reports/unit/{unit_id}/zip")
 def export_unit_zip(
     unit_id: str,
@@ -1216,6 +1155,7 @@ def export_step_zip(
         filename=zip_name,
         media_type="application/zip",
     )
+'''
 
 # -------------------------
 # Root
@@ -1224,6 +1164,7 @@ def export_step_zip(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
