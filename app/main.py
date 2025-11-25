@@ -381,6 +381,7 @@ def create_or_update_result(
     metrics = body.metrics or {}
     finished = body.finished_at or datetime.utcnow()
 
+    # ----- create / update Result -----
     existing_result = session.exec(
         select(Result).where(
             Result.unit_id == unit_id,
@@ -405,6 +406,7 @@ def create_or_update_result(
         )
         session.add(res)
 
+    # ----- update Assignment -----
     a = session.exec(
         select(Assignment).where(
             Assignment.unit_id == unit_id,
@@ -416,7 +418,7 @@ def create_or_update_result(
         a.status = "DONE"
         session.add(a)
 
-    # propagate prev_passed to next step
+    # ----- chain prev_passed to next step -----
     if step_id in STEP_IDS_ORDERED:
         idx = STEP_IDS_ORDERED.index(step_id)
         if idx + 1 < len(STEP_IDS_ORDERED):
@@ -431,7 +433,7 @@ def create_or_update_result(
                 nxt.prev_passed = passed
                 session.add(nxt)
 
-    # mark unit COMPLETED if all assignments DONE
+    # ----- mark unit COMPLETED if all assignments DONE -----
     assigns = session.exec(
         select(Assignment).where(Assignment.unit_id == unit_id)
     ).all()
@@ -442,7 +444,7 @@ def create_or_update_result(
     session.commit()
     session.refresh(res)
 
-    # create notification for next tester if needed
+    # ----- create notification for next tester (same as before) -----
     if passed and step_id in STEP_IDS_ORDERED:
         idx = STEP_IDS_ORDERED.index(step_id)
         if idx + 1 < len(STEP_IDS_ORDERED):
@@ -476,7 +478,9 @@ def create_or_update_result(
                     session.add(note)
                     session.commit()
 
-    return ResultOut(**res.dict())
+    # ✅ just return `res`, FastAPI → ResultOut
+    return res
+
 
 # Storage config for uploads
 STORAGE_ROOT = Path("storage")
@@ -568,6 +572,65 @@ async def upload_evidence(
     session.commit()
 
     return {"file_id": meta.id, "deduplicated": False}
+
+
+# =====================================================
+# Tester: Assignments view (tester home page)
+# =====================================================
+
+@app.get("/tester/assignments", response_model=List[Assignment])
+def get_tester_assignments(
+    tester_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    List assignments that a tester can see / work on.
+
+    Frontend calls:
+      GET /tester/assignments?tester_id=<name>
+
+    Rules:
+    - Tester can only query their own assignments (tester_id must match login name)
+    - Supervisor can query assignments for any tester
+    - Only steps that are PENDING/RUNNING, whose previous step passed,
+      and that do NOT already have a Result are returned.
+    """
+    # Security: testers may only query themselves
+    if user.role == "tester" and user.name != tester_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Load all assignments and results
+    assignments = session.exec(select(Assignment)).all()
+    results = session.exec(select(Result)).all()
+    result_set = {(r.unit_id, r.step_id) for r in results}
+
+    visible: List[Assignment] = []
+
+    for a in assignments:
+        # ignore completed steps
+        if a.status not in ("PENDING", "RUNNING"):
+            continue
+
+        # ignore steps that already have a result
+        if (a.unit_id, a.step_id) in result_set:
+            continue
+
+        # previous step must be passed
+        if not a.prev_passed:
+            continue
+
+        # tester can see:
+        # - steps assigned to them
+        # - unassigned steps (None)
+        if a.tester_id not in (None, tester_id):
+            continue
+
+        visible.append(a)
+
+    # Sort nicely for UI: by unit, then by step order
+    visible.sort(key=lambda x: (x.unit_id, STEP_BY_ID[x.step_id].order))
+    return visible
 
 # =====================================================
 # Scheduling (Supervisor)
@@ -737,4 +800,5 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
