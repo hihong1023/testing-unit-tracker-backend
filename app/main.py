@@ -578,6 +578,82 @@ class DuplicateRequest(BaseModel):
     new_unit_ids: List[str]
     day_shift: int = 1
 
+@app.post("/schedule/duplicate")
+def duplicate_schedule(
+    body: DuplicateRequest,
+    supervisor: User = Depends(require_role("supervisor")),
+    session: Session = Depends(get_session),
+):
+    """
+    Duplicate the schedule (assignments) from one source unit to
+    one or more new units, shifting dates by `day_shift` days.
+
+    Used by the Scheduler "Duplicate Schedule" modal.
+    """
+    src_id = body.source_unit_id.strip()
+    if not src_id:
+        raise HTTPException(status_code=400, detail="source_unit_id required")
+
+    # 1) Source unit must exist
+    src_unit = session.get(Unit, src_id)
+    if not src_unit:
+        raise HTTPException(status_code=404, detail="Source unit not found")
+
+    # 2) Load and sort source assignments by step order
+    src_assignments = session.exec(
+        select(Assignment).where(Assignment.unit_id == src_id)
+    ).all()
+    src_assignments.sort(key=lambda a: STEP_BY_ID[a.step_id].order)
+
+    def shift(dt: Optional[datetime]) -> Optional[datetime]:
+        if not dt:
+            return None
+        return dt + timedelta(days=body.day_shift)
+
+    created_units: List[str] = []
+
+    for new_id_raw in body.new_unit_ids:
+        new_id = new_id_raw.strip()
+        if not new_id:
+            continue
+
+        # Don't allow overwrite of existing units
+        existing = session.get(Unit, new_id)
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unit {new_id} already exists",
+            )
+
+        # 3) Create the new unit, copying SKU/REV/LOT from source
+        new_unit = Unit(
+            id=new_id,
+            sku=src_unit.sku,
+            rev=src_unit.rev,
+            lot=src_unit.lot,
+            status="IN_PROGRESS",
+            current_step_id=STEP_IDS_ORDERED[0] if STEP_IDS_ORDERED else None,
+        )
+        session.add(new_unit)
+
+        # 4) Clone all assignments with shifted dates
+        for src_a in src_assignments:
+            new_a = Assignment(
+                unit_id=new_id,
+                step_id=src_a.step_id,
+                tester_id=src_a.tester_id,
+                start_at=shift(src_a.start_at),
+                end_at=shift(src_a.end_at),
+                status="PENDING",
+                prev_passed=(src_a.step_id == STEP_IDS_ORDERED[0]),
+            )
+            session.add(new_a)
+
+        created_units.append(new_id)
+
+    session.commit()
+    return {"ok": True, "created_units": created_units}
+
 class AssignmentPatch(BaseModel):
     tester_id: Optional[str] = None
     start_at: Optional[datetime] = None
@@ -661,3 +737,4 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
