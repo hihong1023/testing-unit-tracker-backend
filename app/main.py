@@ -12,10 +12,18 @@ import json
 import zipfile
 import os
 import re
-
+from sqlmodel import Session, select
+from app.db import init_db, get_session
+from app.models import (
+    Unit, Assignment, Result, FileMeta, Notification, Token, User, TestStep
+)
 
 app = FastAPI(title="Testing Unit Tracker")
 
+@app.on_event("startup")
+def on_startup():
+    init_db()
+    
 from fastapi.middleware.cors import CORSMiddleware
 
 origins = [
@@ -30,6 +38,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # -------------------------
 # Auth (simple token-based)
@@ -48,32 +57,34 @@ class LoginResponse(BaseModel):
     role: str
     user: User
 
-TOKENS: Dict[str, User] = {}
 
 security = HTTPBearer()
+TOKEN_TTL = timedelta(hours=12)
 
 async def get_current_user(
     creds: HTTPAuthorizationCredentials = Depends(security),
+    session: Session = Depends(get_session),
 ) -> User:
-    token = creds.credentials
-    user = TOKENS.get(token)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return user
+    token_str = creds.credentials
+    token_row = session.get(Token, token_str)
 
-def require_role(required_role: str):
-    async def dep(user: User = Depends(get_current_user)) -> User:
-        if user.role != required_role:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        return user
-    return dep
+    if not token_row:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    if datetime.utcnow() - token_row.issued_at > TOKEN_TTL:
+        session.delete(token_row)
+        session.commit()
+        raise HTTPException(status_code=401, detail="Token expired")
+
+    return User(id=token_row.user_id, name=token_row.name, role=token_row.role)
+
 
 # Preset accounts
 PRESET_TESTERS = ["alex","bryan", "ge fan","jimmy", "kae","krish", "nicholas" ,  "sunny",  "yew meng", "yubo",  "zhen yang",  ]
 PRESET_SUPERVISORS = ["kian siang", "alban","hai hong"]
 
 @app.post("/auth/login", response_model=LoginResponse)
-def login(body: LoginRequest):
+def login(body: LoginRequest, session: Session = Depends(get_session)):
     username = body.name.strip()
     if not username:
         raise HTTPException(status_code=400, detail="Name is required")
@@ -88,9 +99,19 @@ def login(body: LoginRequest):
         raise HTTPException(status_code=401, detail="Unknown user")
 
     user = User(id=str(uuid4()), name=username, role=role)
-    token = str(uuid4())
-    TOKENS[token] = user
-    return LoginResponse(access_token=token, role=role, user=user)
+
+    token_str = str(uuid4())
+    token_row = Token(
+        token=token_str,
+        user_id=user.id,
+        name=user.name,
+        role=user.role,
+    )
+    session.add(token_row)
+    session.commit()
+
+    return LoginResponse(access_token=token_str, role=role, user=user)
+
 
 @app.get("/testers", response_model=List[str])
 def list_testers(supervisor: User = Depends(require_role("supervisor"))):
@@ -196,21 +217,8 @@ class Notification(BaseModel):
     read: bool = False
 
 
-# All notifications in a flat dict by id
-NOTIFICATIONS: Dict[str, Notification] = {}
-
-# Index: tester_id -> list of notification IDs (to keep order)
-TESTER_NOTIF_INDEX: Dict[str, List[str]] = {}
 
 
-UNITS: Dict[str, Unit] = {}
-ASSIGNMENTS: Dict[str, Assignment] = {}
-RESULTS: Dict[str, Result] = {}
-FILES: Dict[str, FileMeta] = {}
-
-
-# For idempotency: (unit_id, step_id) -> result_id
-RESULT_BY_UNIT_STEP: Dict[Tuple[str, int], str] = {}
 
 @app.get("/results/{result_id}/files", response_model=List[FileMetaOut])
 def list_result_files(result_id: str, user: User = Depends(get_current_user)):
@@ -295,11 +303,14 @@ class UnitDetails(BaseModel):
 def create_unit(
     body: CreateUnitRequest,
     supervisor: User = Depends(require_role("supervisor")),
+    session: Session = Depends(get_session),
 ):
     unit_id = body.unit_id.strip()
     if not unit_id:
         raise HTTPException(status_code=400, detail="unit_id required")
-    if unit_id in UNITS:
+
+    existing = session.get(Unit, unit_id)
+    if existing:
         raise HTTPException(status_code=400, detail="Unit already exists")
 
     unit = Unit(
@@ -309,18 +320,20 @@ def create_unit(
         lot=body.lot,
         current_step_id=STEP_IDS_ORDERED[0] if STEP_IDS_ORDERED else None,
     )
-    UNITS[unit_id] = unit
+    session.add(unit)
 
     for idx, step_id in enumerate(STEP_IDS_ORDERED):
         a = Assignment(
-            id=str(uuid4()),
             unit_id=unit_id,
             step_id=step_id,
             prev_passed=(idx == 0),
         )
-        ASSIGNMENTS[a.id] = a
+        session.add(a)
 
+    session.commit()
+    session.refresh(unit)
     return unit
+
 
 @app.delete("/units/{unit_id}")
 def delete_unit(
@@ -346,54 +359,59 @@ def delete_unit(
     return {"ok": True}
 
 @app.get("/units/summary", response_model=List[UnitSummary])
-def get_units_summary(user: User = Depends(get_current_user)):
+def get_units_summary(
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    units = session.exec(select(Unit)).all()
     summaries: List[UnitSummary] = []
-    for unit_id, unit in UNITS.items():
-        unit_assignments = [a for a in ASSIGNMENTS.values() if a.unit_id == unit_id]
-        unit_assignments.sort(key=lambda a: STEP_BY_ID[a.step_id].order)
-        total_steps = len(unit_assignments)
-        passed_steps = 0
-        for a in unit_assignments:
-            key = (unit_id, a.step_id)
-            rid = RESULT_BY_UNIT_STEP.get(key)
-            if rid:
-                res = RESULTS[rid]
-                if res.passed:
-                    passed_steps += 1
-        progress = (passed_steps / total_steps) * 100 if total_steps else 0.0
+
+    for u in units:
+        assigns = session.exec(
+            select(Assignment).where(Assignment.unit_id == u.id)
+        ).all()
+        assigns.sort(key=lambda a: STEP_BY_ID[a.step_id].order)
+
+        total_steps = len(assigns)
+
+        results = session.exec(
+            select(Result).where(Result.unit_id == u.id)
+        ).all()
+        result_map = {(r.unit_id, r.step_id): r for r in results}
+
+        passed_steps = sum(
+            1 for a in assigns
+            if (u.id, a.step_id) in result_map and result_map[(u.id, a.step_id)].passed
+        )
+        progress = (passed_steps / total_steps * 100) if total_steps else 0.0
 
         next_step_id = None
         next_step_name = None
-        for a in unit_assignments:
-            key = (unit_id, a.step_id)
-            rid = RESULT_BY_UNIT_STEP.get(key)
-            if not rid:
+        for a in assigns:
+            if (u.id, a.step_id) not in result_map:
                 next_step_id = a.step_id
                 next_step_name = STEP_BY_ID[a.step_id].name
                 break
 
         if total_steps == 0:
             status = "EMPTY"
-        elif all(
-            (RESULT_BY_UNIT_STEP.get((unit_id, a.step_id)) is not None)
-            for a in unit_assignments
-        ):
+        elif len(result_map) == total_steps:
             status = "COMPLETED"
         else:
             status = "IN_PROGRESS"
 
-        summaries.append(
-            UnitSummary(
-                unit_id=unit_id,
-                status=status,
-                progress_percent=progress,
-                passed_steps=passed_steps,
-                total_steps=total_steps,
-                next_step_id=next_step_id,
-                next_step_name=next_step_name,
-            )
-        )
+        summaries.append(UnitSummary(
+            unit_id=u.id,
+            status=status,
+            progress_percent=progress,
+            passed_steps=passed_steps,
+            total_steps=total_steps,
+            next_step_id=next_step_id,
+            next_step_name=next_step_name,
+        ))
+
     return summaries
+
 
 @app.get("/units/{unit_id}/details", response_model=UnitDetails)
 def get_unit_details(unit_id: str, user: User = Depends(get_current_user)):
@@ -477,17 +495,30 @@ def get_tester_assignments(
     user: User = Depends(get_current_user),
 ):
     out = []
+
     for a in ASSIGNMENTS.values():
+        # ignore done steps
         if a.status not in ("PENDING", "RUNNING"):
             continue
+
+        # ignore steps with existing results
         if (a.unit_id, a.step_id) in RESULT_BY_UNIT_STEP:
-            continue                      # already has result
+            continue
+
+        # must only allow steps whose previous step passed
         if not a.prev_passed:
-            continue                      # not ready yet
+            continue
+
+        # tester can see:
+        # - steps already assigned to them
+        # - steps NOT assigned (unassigned = ready to test)
         if a.tester_id not in (None, tester_id):
-            continue                      # assigned to someone else
+            continue
+
         out.append(a)
+
     return out
+
 
 
 # === NOTIFICATIONS: endpoints ========================
@@ -639,63 +670,132 @@ def add_ready_notification(unit_id: str, from_step_id: int, to_step_id: int) -> 
 def create_or_update_result(
     body: ResultIn,
     user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ):
+    # ---- 1) Validate step exists ----
     if body.step_id not in STEP_BY_ID:
         raise HTTPException(status_code=400, detail="Unknown step_id")
-    if body.unit_id not in UNITS:
+
+    # ---- 2) Validate unit exists ----
+    unit = session.get(Unit, body.unit_id)
+    if not unit:
         raise HTTPException(status_code=404, detail="Unit not found")
 
+    unit_id = body.unit_id
+    step_id = body.step_id
     passed = body.passed
     metrics = body.metrics or {}
-
-    key = (body.unit_id, body.step_id)
-
-    # Use client-provided finished_at if given, otherwise "now"
     finished = body.finished_at or datetime.utcnow()
 
-    if key in RESULT_BY_UNIT_STEP:
-        # update existing result (idempotent)
-        rid = RESULT_BY_UNIT_STEP[key]
-        existing = RESULTS[rid]
-        existing.metrics = metrics
-        existing.passed = passed
-        existing.finished_at = finished
-        RESULTS[rid] = existing
-        res = existing
+    # ---- 3) Idempotent result lookup by (unit_id, step_id) ----
+    existing_result = session.exec(
+        select(Result).where(
+            Result.unit_id == unit_id,
+            Result.step_id == step_id
+        )
+    ).first()
+
+    if existing_result:
+        # ---- 4a) Update existing result ----
+        existing_result.metrics = metrics
+        existing_result.passed = passed
+        existing_result.finished_at = finished
+        res = existing_result
     else:
-        rid = str(uuid4())
+        # ---- 4b) Create new result ----
         res = Result(
-            id=rid,
-            unit_id=body.unit_id,
-            step_id=body.step_id,
-            metrics=metrics,
+            unit_id=unit_id,
+            step_id=step_id,
             passed=passed,
-            files=[],
+            metrics=metrics,
+            files=[],                      # same as your old logic
             submitted_by=user.id,
             finished_at=finished,
         )
-        RESULTS[rid] = res
-        RESULT_BY_UNIT_STEP[key] = rid
+        session.add(res)
 
+    # ---- 5) Whoever submits becomes tester for this step ----
+    a = session.exec(
+        select(Assignment).where(
+            Assignment.unit_id == unit_id,
+            Assignment.step_id == step_id
+        )
+    ).first()
 
-    # NEW LOGIC: whoever submits the result becomes the tester for this step
-    for a in ASSIGNMENTS.values():
-        if a.unit_id == body.unit_id and a.step_id == body.step_id:
-            a.tester_id = user.name   # e.g. "tester2"
-            ASSIGNMENTS[a.id] = a
-            break
+    if a:
+        a.tester_id = user.name
+        a.status = "DONE"
+        session.add(a)
 
-    # Update assignment chaining + unit status
-    update_assignments_after_result(body.unit_id, body.step_id, passed)
-
-    # If this step passed and there is a next step, notify that tester
-    if passed and body.step_id in STEP_IDS_ORDERED:
-        idx = STEP_IDS_ORDERED.index(body.step_id)
+    # ---- 6) Chain prev_passed to next step ----
+    if step_id in STEP_IDS_ORDERED:
+        idx = STEP_IDS_ORDERED.index(step_id)
         if idx + 1 < len(STEP_IDS_ORDERED):
             next_step_id = STEP_IDS_ORDERED[idx + 1]
-            add_ready_notification(body.unit_id, body.step_id, next_step_id)
+
+            nxt = session.exec(
+                select(Assignment).where(
+                    Assignment.unit_id == unit_id,
+                    Assignment.step_id == next_step_id
+                )
+            ).first()
+
+            if nxt:
+                nxt.prev_passed = passed
+                session.add(nxt)
+
+    # ---- 7) Update unit status if all assignments DONE ----
+    assigns = session.exec(
+        select(Assignment).where(Assignment.unit_id == unit_id)
+    ).all()
+
+    if assigns and all(x.status == "DONE" for x in assigns):
+        unit.status = "COMPLETED"
+        session.add(unit)
+
+    session.commit()
+    session.refresh(res)
+
+    # ---- 8) If passed -> notify next tester (dedupe) ----
+    if passed and step_id in STEP_IDS_ORDERED:
+        idx = STEP_IDS_ORDERED.index(step_id)
+        if idx + 1 < len(STEP_IDS_ORDERED):
+            next_step_id = STEP_IDS_ORDERED[idx + 1]
+
+            next_assign = session.exec(
+                select(Assignment).where(
+                    Assignment.unit_id == unit_id,
+                    Assignment.step_id == next_step_id,
+                )
+            ).first()
+
+            if next_assign and next_assign.tester_id:
+                # check duplicate notification
+                dup = session.exec(
+                    select(Notification).where(
+                        Notification.tester_id == next_assign.tester_id,
+                        Notification.unit_id == unit_id,
+                        Notification.from_step_id == step_id,
+                        Notification.to_step_id == next_step_id,
+                    )
+                ).first()
+
+                if not dup:
+                    note = Notification(
+                        tester_id=next_assign.tester_id,
+                        unit_id=unit_id,
+                        from_step_id=step_id,
+                        to_step_id=next_step_id,
+                        message=(
+                            f"Unit {unit_id} is ready for "
+                            f"{STEP_BY_ID[next_step_id].name} (previous step passed)."
+                        ),
+                    )
+                    session.add(note)
+                    session.commit()
 
     return ResultOut(**res.dict())
+
 
 
 @app.delete("/results/{unit_id}/{step_id}")
@@ -755,15 +855,31 @@ async def upload_evidence(
     step_id: int = Form(...),
     result_id: str = Form(...),
     file: UploadFile = File(...),
-    user: User = Depends(get_current_user)
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ):
-    if unit_id not in UNITS:
+    # ---- 1) Unit must exist ----
+    unit = session.get(Unit, unit_id)
+    if not unit:
         raise HTTPException(status_code=404, detail="Unit not found")
+
+    # ---- 2) Step must exist ----
     if step_id not in STEP_BY_ID:
         raise HTTPException(status_code=400, detail="Unknown step_id")
-    if result_id not in RESULTS:
+
+    # ---- 3) Result must exist ----
+    res = session.get(Result, result_id)
+    if not res:
         raise HTTPException(status_code=404, detail="Result not found")
 
+    # ---- 4) Safety: result must match unit+step ----
+    if res.unit_id != unit_id or res.step_id != step_id:
+        raise HTTPException(
+            status_code=400,
+            detail="result_id does not match unit/step"
+        )
+
+    # ---- 5) file extension check ----
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(status_code=400, detail=f"File type {ext} not allowed")
@@ -773,15 +889,26 @@ async def upload_evidence(
     if size > MAX_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="File too large")
 
+    # ---- 6) hash for dedupe ----
     sha = hashlib.sha256(content).hexdigest()
-    for existing in FILES.values():
-        if existing.sha256 == sha and existing.unit_id == unit_id and existing.step_id == step_id:
-            res = RESULTS[result_id]
-            if existing.id not in res.files:
-                res.files.append(existing.id)
-                RESULTS[result_id] = res
-            return {"file_id": existing.id, "deduplicated": True}
 
+    # ---- 7) dedupe search in DB ----
+    existing = session.exec(
+        select(FileMeta).where(
+            FileMeta.sha256 == sha,
+            FileMeta.unit_id == unit_id,
+            FileMeta.step_id == step_id
+        )
+    ).first()
+
+    if existing:
+        if existing.id not in res.files:
+            res.files.append(existing.id)
+            session.add(res)
+            session.commit()
+        return {"file_id": existing.id, "deduplicated": True}
+
+    # ---- 8) new file store to disk ----
     bucket = sha[:2]
     bucket_dir = STORAGE_ROOT / bucket
     bucket_dir.mkdir(parents=True, exist_ok=True)
@@ -794,9 +921,8 @@ async def upload_evidence(
     with open(stored_path, "wb") as f:
         f.write(content)
 
-    fid = str(uuid4())
+    # ---- 9) create FileMeta row ----
     meta = FileMeta(
-        id=fid,
         unit_id=unit_id,
         step_id=step_id,
         result_id=result_id,
@@ -806,13 +932,18 @@ async def upload_evidence(
         sha256=sha,
         size=size,
     )
-    FILES[fid] = meta
+    session.add(meta)
+    session.commit()
+    session.refresh(meta)
 
-    res = RESULTS[result_id]
-    res.files.append(fid)
-    RESULTS[result_id] = res
+    # ---- 10) attach to Result.files ----
+    res.files.append(meta.id)
+    session.add(res)
+    session.commit()
 
-    return {"file_id": fid, "deduplicated": False}
+    return {"file_id": meta.id, "deduplicated": False}
+
+
 
 # -------------------------
 # Scheduling (Supervisor)
@@ -961,6 +1092,24 @@ def patch_assignment(
     ASSIGNMENTS[assign_id] = a
     return a
 
+@app.post("/steps/sync")
+def sync_steps(supervisor: User = Depends(require_role("supervisor"))):
+    for unit_id in UNITS.keys():
+        existing_step_ids = {a.step_id for a in ASSIGNMENTS.values() if a.unit_id == unit_id}
+
+        for idx, step_id in enumerate(STEP_IDS_ORDERED):
+            if step_id in existing_step_ids:
+                continue
+
+            new_a = Assignment(
+                id=str(uuid4()),
+                unit_id=unit_id,
+                step_id=step_id,
+                prev_passed=(step_id == STEP_IDS_ORDERED[0]),
+            )
+            ASSIGNMENTS[new_a.id] = new_a
+
+    return {"ok": True}
 
 # -------------------------
 # Evidence Export (ZIP)
@@ -1034,7 +1183,7 @@ def export_unit_zip(
 def export_step_zip(
     unit_id: str,
     step_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(),
 ):
     if unit_id not in UNITS:
         raise HTTPException(status_code=404, detail="Unit not found")
@@ -1075,6 +1224,7 @@ def export_step_zip(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
