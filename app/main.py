@@ -476,11 +476,19 @@ def get_tester_assignments(
     tester_id: str,
     user: User = Depends(get_current_user),
 ):
-    return [
-        a
-        for a in ASSIGNMENTS.values()
-        if a.tester_id == tester_id and a.status in ("PENDING", "RUNNING")
-    ]
+    out = []
+    for a in ASSIGNMENTS.values():
+        if a.status not in ("PENDING", "RUNNING"):
+            continue
+        if (a.unit_id, a.step_id) in RESULT_BY_UNIT_STEP:
+            continue                      # already has result
+        if not a.prev_passed:
+            continue                      # not ready yet
+        if a.tester_id not in (None, tester_id):
+            continue                      # assigned to someone else
+        out.append(a)
+    return out
+
 
 # === NOTIFICATIONS: endpoints ========================
 
@@ -576,6 +584,8 @@ def update_assignments_after_result(unit_id: str, step_id: int, passed: bool) ->
         unit = UNITS[unit_id]
         unit.status = "COMPLETED"
         UNITS[unit_id] = unit
+
+
 
 # === NOTIFICATIONS: helper ==========================
 
@@ -686,6 +696,42 @@ def create_or_update_result(
             add_ready_notification(body.unit_id, body.step_id, next_step_id)
 
     return ResultOut(**res.dict())
+
+
+@app.delete("/results/{unit_id}/{step_id}")
+def delete_result_for_step(
+    unit_id: str,
+    step_id: int,
+    supervisor: User = Depends(require_role("supervisor")),
+):
+    key = (unit_id, step_id)
+    rid = RESULT_BY_UNIT_STEP.get(key)
+    if not rid:
+        return {"ok": True, "deleted": False}
+
+    # remove result
+    del RESULTS[rid]
+    del RESULT_BY_UNIT_STEP[key]
+
+    # reset assignment
+    for a in ASSIGNMENTS.values():
+        if a.unit_id == unit_id and a.step_id == step_id:
+            a.status = "PENDING"
+            ASSIGNMENTS[a.id] = a
+            break
+
+    # also reset prev_passed of next step to False (since chain breaks)
+    if step_id in STEP_IDS_ORDERED:
+        idx = STEP_IDS_ORDERED.index(step_id)
+        if idx + 1 < len(STEP_IDS_ORDERED):
+            next_id = STEP_IDS_ORDERED[idx + 1]
+            for a in ASSIGNMENTS.values():
+                if a.unit_id == unit_id and a.step_id == next_id:
+                    a.prev_passed = False
+                    ASSIGNMENTS[a.id] = a
+                    break
+
+    return {"ok": True, "deleted": True}
 
 # Storage config
 STORAGE_ROOT = Path("storage")
@@ -1029,6 +1075,7 @@ def export_step_zip(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
