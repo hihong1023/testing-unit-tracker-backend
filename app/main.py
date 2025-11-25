@@ -455,7 +455,7 @@ def get_tester_assignments(
 
     return out
 
-'''
+
 
 # === NOTIFICATIONS: endpoints ========================
 
@@ -505,7 +505,7 @@ def mark_notification_read(
     notif.read = True
     NOTIFICATIONS[notif_id] = notif
     return {"ok": True}
-
+'''
 
 # -------------------------
 # Results & Uploads
@@ -529,77 +529,11 @@ class ResultOut(BaseModel):
     submitted_by: Optional[str]
     finished_at: datetime
 
-def update_assignments_after_result(unit_id: str, step_id: int, passed: bool) -> None:
-    for a in ASSIGNMENTS.values():
-        if a.unit_id == unit_id and a.step_id == step_id:
-            a.status = "DONE"
-            ASSIGNMENTS[a.id] = a
-            break
-
-    if step_id in STEP_IDS_ORDERED:
-        idx = STEP_IDS_ORDERED.index(step_id)
-        if idx + 1 < len(STEP_IDS_ORDERED):
-            next_step_id = STEP_IDS_ORDERED[idx + 1]
-            for a in ASSIGNMENTS.values():
-                if a.unit_id == unit_id and a.step_id == next_step_id:
-                    a.prev_passed = passed
-                    ASSIGNMENTS[a.id] = a
-                    break
-
-    unit_assignments = [a for a in ASSIGNMENTS.values() if a.unit_id == unit_id]
-    if unit_assignments and all(a.status == "DONE" for a in unit_assignments):
-        unit = UNITS[unit_id]
-        unit.status = "COMPLETED"
-        UNITS[unit_id] = unit
 
 
 
 # === NOTIFICATIONS: helper ==========================
 
-def add_ready_notification(unit_id: str, from_step_id: int, to_step_id: int) -> None:
-    """
-    When a step passes and the next step becomes 'unblocked', notify the tester
-    assigned to the next step (if any).
-    Avoid sending duplicate notifications for the same unit/next-step/tester.
-    """
-    step = STEP_BY_ID.get(to_step_id)
-    if not step:
-        return
-
-    # Find assignment for the next step that has a tester
-    for a in ASSIGNMENTS.values():
-        if a.unit_id == unit_id and a.step_id == to_step_id and a.tester_id:
-            tester_id = a.tester_id
-
-            # Check if a similar notification already exists
-            existing_ids = TESTER_NOTIF_INDEX.get(tester_id, [])
-            for nid in existing_ids:
-                n = NOTIFICATIONS.get(nid)
-                if not n:
-                    continue
-                if (
-                    n.unit_id == unit_id
-                    and n.from_step_id == from_step_id
-                    and n.to_step_id == to_step_id
-                ):
-                    # Already notified this tester about this transition
-                    return
-
-            msg = f"Unit {unit_id} is ready for {step.name} (previous step passed)."
-            nid = str(uuid4())
-            notif = Notification(
-                id=nid,
-                tester_id=tester_id,
-                unit_id=unit_id,
-                from_step_id=from_step_id,
-                to_step_id=to_step_id,
-                message=msg,
-                created_at=datetime.utcnow(),
-                read=False,
-            )
-            NOTIFICATIONS[nid] = notif
-            TESTER_NOTIF_INDEX.setdefault(tester_id, []).append(nid)
-            return
 
 
 @app.post("/results", response_model=ResultOut)
@@ -1164,6 +1098,7 @@ def export_step_zip(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
