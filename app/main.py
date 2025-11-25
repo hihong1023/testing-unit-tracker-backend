@@ -939,6 +939,79 @@ def overlaps(
     # inclusive overlap: [a_start, a_end] vs [b_start, b_end]
     return (a_start <= b_end) and (b_start <= a_end)
 
+@app.get("/assignments/schedule", response_model=List[Assignment])
+def get_schedule(
+    supervisor: User = Depends(require_role("supervisor")),
+    session: Session = Depends(get_session),
+):
+    """
+    Return all assignments for the scheduler page.
+    Frontend uses this to render the Gantt-like view.
+    """
+    assignments = session.exec(select(Assignment)).all()
+    # Optional: sort by unit then by step order
+    assignments.sort(key=lambda a: (a.unit_id, STEP_BY_ID[a.step_id].order))
+    return assignments
+
+
+@app.patch("/assignments/{assign_id}", response_model=Assignment)
+def patch_assignment(
+    assign_id: str,
+    body: AssignmentPatch,
+    supervisor: User = Depends(require_role("supervisor")),
+    session: Session = Depends(get_session),
+):
+    """
+    Update a single assignment (tester, start/end dates, status).
+    Used by SchedulerPage.
+    """
+    a = session.get(Assignment, assign_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    # New values (dates only, but still stored as datetime)
+    new_tester = body.tester_id if body.tester_id is not None else a.tester_id
+    new_start = body.start_at if body.start_at is not None else a.start_at
+    new_end = body.end_at if body.end_at is not None else a.end_at
+
+    # Basic sanity: end cannot be before start
+    if new_start and new_end and new_end < new_start:
+        raise HTTPException(
+            status_code=400,
+            detail="End date cannot be before start date",
+        )
+
+    # Prevent overlapping tests for the same unit
+    others = session.exec(
+        select(Assignment).where(Assignment.unit_id == a.unit_id)
+    ).all()
+
+    for other in others:
+        if other.id == a.id:
+            continue
+        if overlaps(new_start, new_end, other.start_at, other.end_at):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Unit '{a.unit_id}' already has another test scheduled "
+                    f"from {other.start_at} to {other.end_at}"
+                ),
+            )
+
+    # Apply changes
+    if body.tester_id is not None:
+        a.tester_id = body.tester_id
+    if body.start_at is not None:
+        a.start_at = body.start_at
+    if body.end_at is not None:
+        a.end_at = body.end_at
+    if body.status is not None:
+        a.status = body.status
+
+    session.add(a)
+    session.commit()
+    session.refresh(a)
+    return a
 '''
 @app.get("/assignments/schedule", response_model=List[Assignment])
 def get_schedule(supervisor: User = Depends(require_role("supervisor"))):
@@ -1133,6 +1206,7 @@ def export_step_zip(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
