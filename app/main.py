@@ -268,30 +268,64 @@ def create_unit(
     session.refresh(unit)
     return unit
 
-'''
-@app.delete("/units/{unit_id}")
+@app.delete("/units/{unit_id}", status_code=200)
 def delete_unit(
     unit_id: str,
     supervisor: User = Depends(require_role("supervisor")),
+    session: Session = Depends(get_session),
 ):
-    if unit_id not in UNITS:
-        raise HTTPException(status_code=404, detail="Unit not found")
+    """
+    Delete a unit and all related data.
+    This is idempotent: if the unit doesn't exist, we still return 200.
+    Frontend (UnitsPage handleDelete) calls this.
+    """
+    # 1) Try to load the unit
+    unit = session.get(Unit, unit_id)
 
-    to_del_a = [aid for aid, a in ASSIGNMENTS.items() if a.unit_id == unit_id]
-    for aid in to_del_a:
-        del ASSIGNMENTS[aid]
+    # If already missing, treat as "already deleted"
+    if not unit:
+        return {"ok": True, "deleted": False}
 
-    to_del_r = [rid for rid, r in RESULTS.items() if r.unit_id == unit_id]
-    for rid in to_del_r:
-        del RESULTS[rid]
+    # 2) Delete file metadata + physical files for this unit
+    files = session.exec(
+        select(FileMeta).where(FileMeta.unit_id == unit_id)
+    ).all()
+    for f in files:
+        if f.stored_path:
+            p = Path(f.stored_path)
+            try:
+                p.unlink()
+            except FileNotFoundError:
+                # file already gone, ignore
+                pass
+        session.delete(f)
 
-    to_del_f = [fid for fid, f in FILES.items() if f.unit_id == unit_id]
-    for fid in to_del_f:
-        del FILES[fid]
+    # 3) Delete results for this unit
+    results = session.exec(
+        select(Result).where(Result.unit_id == unit_id)
+    ).all()
+    for r in results:
+        session.delete(r)
 
-    del UNITS[unit_id]
-    return {"ok": True}
-'''
+    # 4) Delete assignments for this unit
+    assignments = session.exec(
+        select(Assignment).where(Assignment.unit_id == unit_id)
+    ).all()
+    for a in assignments:
+        session.delete(a)
+
+    # 5) Delete notifications for this unit (if Notification has unit_id)
+    notes = session.exec(
+        select(Notification).where(Notification.unit_id == unit_id)
+    ).all()
+    for n in notes:
+        session.delete(n)
+
+    # 6) Delete the unit itself
+    session.delete(unit)
+    session.commit()
+
+    return {"ok": True, "deleted": True}
 
 @app.get("/units/summary", response_model=List[UnitSummary])
 def get_units_summary(
@@ -1099,6 +1133,7 @@ def export_step_zip(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
