@@ -42,13 +42,15 @@ class Unit(SQLModel, table=True):
 
 class Assignment(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    unit_id: str = Field(index=True, foreign_key="unit.id")
-    step_id: int = Field(index=True)
-    tester_id: Optional[str] = Field(default=None, index=True)
+    unit_id: str = Field(foreign_key="unit.id")
+    step_id: int
+    tester_id: Optional[str] = None
     start_at: Optional[datetime] = None
     end_at: Optional[datetime] = None
-    status: str = "PENDING"
-    prev_passed: bool = False
+    status: str = "PENDING"          # "PENDING" | "RUNNING" | "DONE"
+    prev_passed: bool = False        # your existing field
+    skipped: bool = False            # 🔹 NEW: this step is not tested for this unit
+
 
 
 class Result(SQLModel, table=True):
@@ -83,3 +85,4 @@ class Notification(SQLModel, table=True):
     message: str
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     read: bool = False
+
