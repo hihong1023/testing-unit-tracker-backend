@@ -357,7 +357,10 @@ def get_units_summary(
             select(Assignment).where(Assignment.unit_id == u.id)
         ).all()
         assigns.sort(key=lambda a: STEP_BY_ID[a.step_id].order)
-        total_steps = len(assigns)
+        
+        effective_assigns = [a for a in assigns if not a.skipped]  # 🔹 ignore skipped
+        total_steps = len(effective_assigns)
+
 
         results = session.exec(
             select(Result).where(Result.unit_id == u.id)
@@ -366,14 +369,13 @@ def get_units_summary(
 
         passed_steps = sum(
             1
-            for a in assigns
+            for a in effective_assigns
             if (u.id, a.step_id) in result_map and result_map[(u.id, a.step_id)].passed
         )
-        progress = (passed_steps / total_steps * 100) if total_steps else 0.0
-
+        
         next_step_id = None
         next_step_name = None
-        for a in assigns:
+        for a in effective_assigns:
             if (u.id, a.step_id) not in result_map:
                 next_step_id = a.step_id
                 next_step_name = STEP_BY_ID[a.step_id].name
@@ -518,12 +520,12 @@ def create_or_update_result(
                 session.add(nxt)
 
     # ----- mark unit COMPLETED if all assignments DONE -----
-    assigns = session.exec(
+    assigns_all = session.exec(
         select(Assignment).where(Assignment.unit_id == unit_id)
     ).all()
-    if assigns and all(x.status == "DONE" for x in assigns):
+    if assigns_all and all(x.skipped or x.status == "DONE" for x in assigns_all):
         unit.status = "COMPLETED"
-        session.add(unit)
+
 
     session.commit()
     session.refresh(res)
@@ -806,6 +808,7 @@ class AssignmentPatch(BaseModel):
     start_at: Optional[datetime] = None
     end_at: Optional[datetime] = None
     status: Optional[str] = None
+    skipped: Optional[bool] = None
 
 def overlaps(
     a_start: Optional[datetime],
@@ -834,69 +837,63 @@ def patch_assignment(
     supervisor: User = Depends(require_role("supervisor")),
     session: Session = Depends(get_session),
 ):
-    """
-    Patch a single assignment.
-
-    Important behaviour:
-    - If a field is NOT sent at all in the JSON -> leave it unchanged.
-    - If a field IS sent with null -> CLEAR it (set to None in DB).
-      This allows "Unassigned" tester and "Clear dates" to work.
-    """
     a = session.get(Assignment, assign_id)
     if not a:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    # Which fields were actually provided in the request?
-    # (Pydantic v1: __fields_set__; in v2 it's model_fields_set)
-    fields_set = getattr(body, "__fields_set__", set())
+    # --- if skipping, clear tester & dates and mark status ---
+    if body.skipped is True:
+        a.skipped = True
+        a.tester_id = None
+        a.start_at = None
+        a.end_at = None
+        a.status = "SKIPPED"
+    else:
+        # only update fields if explicitly provided
+        if body.tester_id is not None:
+            a.tester_id = body.tester_id
+        if body.start_at is not None:
+            a.start_at = body.start_at
+        if body.end_at is not None:
+            a.end_at = body.end_at
+        if body.status is not None:
+            a.status = body.status
+        if body.skipped is False:
+            # un-skip
+            a.skipped = False
+            if a.status == "SKIPPED":
+                a.status = "PENDING"
 
-    # Compute "future" values for validation
-    new_tester = a.tester_id if "tester_id" not in fields_set else body.tester_id
-    new_start  = a.start_at  if "start_at"  not in fields_set else body.start_at
-    new_end    = a.end_at    if "end_at"    not in fields_set else body.end_at
-
-    # Basic sanity: end cannot be before start
-    if new_start and new_end and new_end < new_start:
-        raise HTTPException(
-            status_code=400,
-            detail="End date cannot be before start date",
-        )
-
-    # Prevent overlapping tests for the same unit
-    others = session.exec(
-        select(Assignment).where(Assignment.unit_id == a.unit_id)
-    ).all()
-    for other in others:
-        if other.id == a.id:
-            continue
-        if overlaps(new_start, new_end, other.start_at, other.end_at):
+    # validation for overlaps only if NOT skipped
+    if not a.skipped:
+        new_start = a.start_at
+        new_end = a.end_at
+        if new_start and new_end and new_end < new_start:
             raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Unit '{a.unit_id}' already has another test scheduled "
-                    f"from {other.start_at} to {other.end_at}"
-                ),
+                status_code=400,
+                detail="End date cannot be before start date",
             )
 
-    # ---- Apply changes only for fields that were actually sent ----
-    if "tester_id" in fields_set:
-        # Can be a real name (assign) or None (unassign)
-        a.tester_id = body.tester_id
-
-    if "start_at" in fields_set:
-        # Can be a datetime or None (clear date)
-        a.start_at = body.start_at
-
-    if "end_at" in fields_set:
-        a.end_at = body.end_at
-
-    if "status" in fields_set and body.status is not None:
-        a.status = body.status
+        others = session.exec(
+            select(Assignment).where(Assignment.unit_id == a.unit_id)
+        ).all()
+        for other in others:
+            if other.id == a.id or other.skipped:
+                continue
+            if overlaps(new_start, new_end, other.start_at, other.end_at):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Unit '{a.unit_id}' already has another test scheduled "
+                        f"from {other.start_at} to {other.end_at}"
+                    ),
+                )
 
     session.add(a)
     session.commit()
     session.refresh(a)
     return a
+
 
 
 # =====================================================
@@ -906,6 +903,7 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
