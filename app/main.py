@@ -260,6 +260,90 @@ def delete_unit(
 
     return {"ok": True, "deleted": True}
 
+class RenameUnitRequest(BaseModel):
+    new_unit_id: str
+
+
+@app.patch("/units/{unit_id}/rename", response_model=Unit)
+def rename_unit(
+    unit_id: str,
+    body: RenameUnitRequest,
+    supervisor: User = Depends(require_role("supervisor")),
+    session: Session = Depends(get_session),
+):
+    """
+    Rename a unit and update all related records (assignments, results,
+    files, notifications) to use the new unit_id.
+
+    Frontend:
+      PATCH /units/{unit_id}/rename
+      { "new_unit_id": "NEW_ID" }
+    """
+    new_id = body.new_unit_id.strip()
+    if not new_id:
+        raise HTTPException(status_code=400, detail="new_unit_id required")
+
+    if new_id == unit_id:
+        # nothing to do
+        unit = session.get(Unit, unit_id)
+        if not unit:
+            raise HTTPException(status_code=404, detail="Unit not found")
+        return unit
+
+    # Check if target id already exists
+    existing = session.get(Unit, new_id)
+    if existing:
+        raise HTTPException(status_code=400, detail="Target unit_id already exists")
+
+    # Load the unit we are renaming
+    unit = session.get(Unit, unit_id)
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    # --- Update related tables first ---
+
+    # Assignments
+    assignments = session.exec(
+        select(Assignment).where(Assignment.unit_id == unit_id)
+    ).all()
+    for a in assignments:
+        a.unit_id = new_id
+        session.add(a)
+
+    # Results
+    results = session.exec(
+        select(Result).where(Result.unit_id == unit_id)
+    ).all()
+    for r in results:
+        r.unit_id = new_id
+        session.add(r)
+
+    # File metadata
+    files = session.exec(
+        select(FileMeta).where(FileMeta.unit_id == unit_id)
+    ).all()
+    for f in files:
+        f.unit_id = new_id
+        session.add(f)
+        # (Optional) we are NOT renaming physical file paths here;
+        # stored_path can still contain the old unit id in the filename.
+
+    # Notifications (if any)
+    notes = session.exec(
+        select(Notification).where(Notification.unit_id == unit_id)
+    ).all()
+    for n in notes:
+        n.unit_id = new_id
+        session.add(n)
+
+    # --- Finally update the Unit primary key ---
+    unit.id = new_id
+    session.add(unit)
+
+    session.commit()
+    session.refresh(unit)
+    return unit
+
 @app.get("/units/summary", response_model=List[UnitSummary])
 def get_units_summary(
     user: User = Depends(get_current_user),
@@ -822,6 +906,7 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
