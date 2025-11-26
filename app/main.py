@@ -86,7 +86,7 @@ def require_role(required_role: str):
 
 # Preset accounts
 PRESET_TESTERS = [
-    "alex", "bryan", "ge fan", "jimmy", "kae", "krish",
+    "alex", "brian", "ge fan", "jimmy", "kae", "krish",
     "nicholas", "sunny", "yew meng", "yubo", "zhen yang",
 ]
 PRESET_SUPERVISORS = ["kian siang", "alban", "hai hong"]
@@ -958,6 +958,7 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
