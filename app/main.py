@@ -8,6 +8,7 @@ from uuid import uuid4
 from pathlib import Path
 import hashlib
 
+
 from sqlmodel import Session, select
 from app.db import init_db, get_session
 from app.models import (
@@ -903,6 +904,7 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
