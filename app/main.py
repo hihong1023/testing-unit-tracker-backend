@@ -28,13 +28,17 @@ from app.models import (
 
 app = FastAPI(title="Testing Unit Tracker")
 
+origins = [
+    "https://proud-sand-0ed440210.3.azurestaticapps.net",
+    "http://localhost:5173",
+]
 @app.on_event("startup")
 def on_startup():
     init_db()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # you can later tighten to just your frontend origins
+    allow_origins=origins,        # you can later tighten to just your frontend origins
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -904,6 +908,7 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
