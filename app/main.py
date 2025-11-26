@@ -741,6 +741,38 @@ def get_tester_assignments(
     visible.sort(key=lambda x: (x.unit_id, STEP_BY_ID[x.step_id].order))
     return visible
 
+@app.get("/tester/schedule", response_model=List[Assignment])
+def get_tester_schedule(
+    tester_id: str,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Full schedule view for a tester.
+
+    Used by 'Upcoming Tests (Tester)' page.
+    - Shows ALL assignments assigned to this tester
+      (PENDING/RUNNING/DONE/SKIPPED, regardless of prev_passed or Result).
+    """
+
+    # Security: testers may only query themselves
+    if user.role == "tester" and user.name != tester_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    assignments = session.exec(
+        select(Assignment).where(Assignment.tester_id == tester_id)
+    ).all()
+
+    # Sort nicely: by start date, then unit, then step order
+    assignments.sort(
+        key=lambda a: (
+            a.start_at or datetime.max,
+            a.unit_id,
+            STEP_BY_ID[a.step_id].order,
+        )
+    )
+    return assignments
+
 # =====================================================
 # Scheduling (Supervisor)
 # =====================================================
@@ -926,6 +958,7 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
