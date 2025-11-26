@@ -750,20 +750,35 @@ def patch_assignment(
     supervisor: User = Depends(require_role("supervisor")),
     session: Session = Depends(get_session),
 ):
+    """
+    Patch a single assignment.
+
+    Important behaviour:
+    - If a field is NOT sent at all in the JSON -> leave it unchanged.
+    - If a field IS sent with null -> CLEAR it (set to None in DB).
+      This allows "Unassigned" tester and "Clear dates" to work.
+    """
     a = session.get(Assignment, assign_id)
     if not a:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    new_tester = body.tester_id if body.tester_id is not None else a.tester_id
-    new_start = body.start_at if body.start_at is not None else a.start_at
-    new_end = body.end_at if body.end_at is not None else a.end_at
+    # Which fields were actually provided in the request?
+    # (Pydantic v1: __fields_set__; in v2 it's model_fields_set)
+    fields_set = getattr(body, "__fields_set__", set())
 
+    # Compute "future" values for validation
+    new_tester = a.tester_id if "tester_id" not in fields_set else body.tester_id
+    new_start  = a.start_at  if "start_at"  not in fields_set else body.start_at
+    new_end    = a.end_at    if "end_at"    not in fields_set else body.end_at
+
+    # Basic sanity: end cannot be before start
     if new_start and new_end and new_end < new_start:
         raise HTTPException(
             status_code=400,
             detail="End date cannot be before start date",
         )
 
+    # Prevent overlapping tests for the same unit
     others = session.exec(
         select(Assignment).where(Assignment.unit_id == a.unit_id)
     ).all()
@@ -779,19 +794,26 @@ def patch_assignment(
                 ),
             )
 
-    if body.tester_id is not None:
+    # ---- Apply changes only for fields that were actually sent ----
+    if "tester_id" in fields_set:
+        # Can be a real name (assign) or None (unassign)
         a.tester_id = body.tester_id
-    if body.start_at is not None:
+
+    if "start_at" in fields_set:
+        # Can be a datetime or None (clear date)
         a.start_at = body.start_at
-    if body.end_at is not None:
+
+    if "end_at" in fields_set:
         a.end_at = body.end_at
-    if body.status is not None:
+
+    if "status" in fields_set and body.status is not None:
         a.status = body.status
 
     session.add(a)
     session.commit()
     session.refresh(a)
     return a
+
 
 # =====================================================
 # Root
@@ -800,5 +822,6 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
