@@ -358,40 +358,57 @@ def get_units_summary(
     summaries: List[UnitSummary] = []
 
     for u in units:
+        # All assignments for this unit, sorted by step order
         assigns = session.exec(
             select(Assignment).where(Assignment.unit_id == u.id)
         ).all()
         assigns.sort(key=lambda a: STEP_BY_ID[a.step_id].order)
-        
-        effective_assigns = [a for a in assigns if not a.skipped]  # 🔹 ignore skipped
+
+        # 🔹 Only count non-skipped steps in progress
+        effective_assigns = [a for a in assigns if not a.skipped]
         total_steps = len(effective_assigns)
 
-
+        # All results for this unit
         results = session.exec(
             select(Result).where(Result.unit_id == u.id)
         ).all()
         result_map = {(r.unit_id, r.step_id): r for r in results}
 
+        # 🔹 Passed steps = number of effective steps with a PASS result
         passed_steps = sum(
             1
             for a in effective_assigns
-            if (u.id, a.step_id) in result_map and result_map[(u.id, a.step_id)].passed
+            if (u.id, a.step_id) in result_map
+            and result_map[(u.id, a.step_id)].passed
         )
-        
-        next_step_id = None
-        next_step_name = None
+
+        # 🔹 Progress percentage (0–100)
+        if total_steps > 0:
+            progress = (passed_steps / total_steps) * 100.0
+        else:
+            progress = 0.0
+
+        # 🔹 Next step: first effective step that does NOT have a result
+        next_step_id: Optional[int] = None
+        next_step_name: Optional[str] = None
         for a in effective_assigns:
             if (u.id, a.step_id) not in result_map:
                 next_step_id = a.step_id
                 next_step_name = STEP_BY_ID[a.step_id].name
                 break
 
+        # 🔹 Status
         if total_steps == 0:
             status = "EMPTY"
-        elif len(result_map) == total_steps:
-            status = "COMPLETED"
         else:
-            status = "IN_PROGRESS"
+            # How many effective steps actually have a result?
+            completed_effective = sum(
+                1 for a in effective_assigns if (u.id, a.step_id) in result_map
+            )
+            if completed_effective == total_steps:
+                status = "COMPLETED"
+            else:
+                status = "IN_PROGRESS"
 
         summaries.append(
             UnitSummary(
@@ -406,6 +423,7 @@ def get_units_summary(
         )
 
     return summaries
+
 
 @app.get("/units/{unit_id}/details", response_model=UnitDetails)
 def get_unit_details(
@@ -908,6 +926,7 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
