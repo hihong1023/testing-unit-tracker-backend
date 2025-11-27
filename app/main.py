@@ -12,7 +12,7 @@ import io
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill, Font
-
+import re
 from sqlmodel import Session, select
 from app.db import init_db, get_session
 from app.models import (
@@ -1071,7 +1071,131 @@ def patch_assignment(
     session.refresh(a)
     return a
 
+# =====================================================
+# Traveller Log
+# =====================================================
+def safe_sheet_title(unit_id: str) -> str:
+    # Excel sheet title must be <=31 chars and not contain [ ] : * ? / \
+    title = re.sub(r'[\[\]\:\*\?\/\\]', "_", unit_id)
+    if len(title) > 31:
+        title = title[:31]
+    return title or "Unit"
 
+
+def add_traveller_sheet_for_unit(
+    wb: Workbook,
+    unit_id: str,
+    session: Session,
+    first_sheet: bool = False,
+):
+    unit = session.get(Unit, unit_id)
+    if not unit:
+        # silently skip missing units; you can also raise if you prefer
+        return
+
+    # assignments + results
+    assignments = session.exec(
+        select(Assignment).where(Assignment.unit_id == unit_id)
+    ).all()
+    results = session.exec(
+        select(Result).where(Result.unit_id == unit_id)
+    ).all()
+
+    assignments_by_step = {a.step_id: a for a in assignments}
+    results_by_step = {r.step_id: r for r in results}
+
+    # use your known ordered steps
+    ordered_steps: list[TestStep] = [STEP_BY_ID[sid] for sid in STEP_IDS_ORDERED]
+
+    # create / reuse sheet
+    sheet_name = safe_sheet_title(unit_id)
+    if first_sheet:
+        ws = wb.active
+        ws.title = sheet_name
+    else:
+        ws = wb.create_sheet(title=sheet_name)
+
+    def fmt_date(dt):
+        if not dt:
+            return ""
+        # 20-Nov format
+        return dt.strftime("%d-%b")
+
+    # Row 1: step headers
+    ws.cell(row=1, column=1, value=unit_id)
+    for col_idx, step in enumerate(ordered_steps, start=2):
+        ws.cell(
+            row=1,
+            column=col_idx,
+            value=f"{step.order}. {step.name}",
+        )
+
+    # Row 2: testers
+    ws.cell(row=2, column=1, value="Tester")
+    for col_idx, step in enumerate(ordered_steps, start=2):
+        a = assignments_by_step.get(step.id)
+        ws.cell(row=2, column=col_idx, value=a.tester_id if a else "")
+
+    # Row 3: dates
+    ws.cell(row=3, column=1, value="Date")
+    for col_idx, step in enumerate(ordered_steps, start=2):
+        r = results_by_step.get(step.id)
+        ws.cell(row=3, column=col_idx, value=fmt_date(r.finished_at) if r else "")
+
+    # Row 4: result
+    ws.cell(row=4, column=1, value="Result")
+    for col_idx, step in enumerate(ordered_steps, start=2):
+        r = results_by_step.get(step.id)
+        if not r:
+            continue
+        val = "Pass" if r.passed else "Fail"
+        cell = ws.cell(row=4, column=col_idx, value=val)
+        if r.passed:
+            cell.fill = PatternFill("solid", fgColor="C6EFCE")
+            cell.font = Font(color="006100")
+        else:
+            cell.fill = PatternFill("solid", fgColor="FFC7CE")
+            cell.font = Font(color="9C0006")
+
+    # column widths
+    for col_idx in range(1, len(ordered_steps) + 2):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 20
+
+class BulkTravellerRequest(BaseModel):
+    unit_ids: List[str]
+
+
+@app.post("/reports/traveller/bulk.xlsx")
+def export_traveller_bulk_xlsx(
+    payload: BulkTravellerRequest,
+    supervisor: User = Depends(require_role("supervisor")),
+    session: Session = Depends(get_session),
+):
+    if not payload.unit_ids:
+        raise HTTPException(status_code=400, detail="No unit_ids provided")
+
+    wb = Workbook()
+    first = True
+    for unit_id in payload.unit_ids:
+        add_traveller_sheet_for_unit(wb, unit_id, session, first_sheet=first)
+        first = False
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    headers = {
+        "Content-Disposition": 'attachment; filename="traveller_logs.xlsx"'
+    }
+
+    return StreamingResponse(
+        buf,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+        headers=headers,
+    )
 
 # =====================================================
 # Root
@@ -1080,6 +1204,7 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
