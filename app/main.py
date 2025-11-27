@@ -1037,7 +1037,6 @@ def patch_assignment(
     if not a:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    # Fields actually sent by client
     sent_fields = body.__fields_set__
 
     # --- if skipping, clear tester & dates and mark status ---
@@ -1048,27 +1047,70 @@ def patch_assignment(
         a.end_at = None
         a.status = "SKIPPED"
     else:
-        # ✅ If a field is present in JSON (even if null), update it
+        # ✅ explicit updates (including None to clear)
         if "tester_id" in sent_fields:
-            a.tester_id = body.tester_id  # can be None → unassign
+            a.tester_id = body.tester_id  # None → unassign
 
         if "start_at" in sent_fields:
-            a.start_at = body.start_at    # None → clear date
+            a.start_at = body.start_at    # None → clear
 
         if "end_at" in sent_fields:
-            a.end_at = body.end_at        # None → clear date
+            a.end_at = body.end_at        # None → clear
 
-        if "status" in sent_fields:
-            if body.status is not None:
-                a.status = body.status
+        prev_status = a.status
+        if "status" in sent_fields and body.status is not None:
+            a.status = body.status
 
+        # --- sync PASS / FAIL into Result + next.prev_passed ---
+        if "status" in sent_fields and body.status in ("PASS", "FAIL"):
+            passed = body.status == "PASS"
+
+            # upsert Result row for this unit / step
+            r = session.exec(
+                select(Result).where(
+                    Result.unit_id == a.unit_id,
+                    Result.step_id == a.step_id,
+                )
+            ).first()
+            now = datetime.utcnow()
+            if r:
+                r.passed = passed
+                r.finished_at = r.finished_at or now
+                session.add(r)
+            else:
+                r = Result(
+                    unit_id=a.unit_id,
+                    step_id=a.step_id,
+                    passed=passed,
+                    metrics={},
+                    files=[],
+                    submitted_by=None,
+                    finished_at=now,
+                )
+                session.add(r)
+
+            # propagate prev_passed to next step
+            if a.step_id in STEP_IDS_ORDERED:
+                idx = STEP_IDS_ORDERED.index(a.step_id)
+                if idx + 1 < len(STEP_IDS_ORDERED):
+                    next_step_id = STEP_IDS_ORDERED[idx + 1]
+                    nxt = session.exec(
+                        select(Assignment).where(
+                            Assignment.unit_id == a.unit_id,
+                            Assignment.step_id == next_step_id,
+                        )
+                    ).first()
+                    if nxt:
+                        nxt.prev_passed = passed
+                        session.add(nxt)
+
+        # if un-skipping
         if body.skipped is False:
-            # un-skip
             a.skipped = False
             if a.status == "SKIPPED":
                 a.status = "PENDING"
 
-    # validation for overlaps only if NOT skipped
+    # --- validate overlaps only if NOT skipped ---
     if not a.skipped:
         new_start = a.start_at
         new_end = a.end_at
@@ -1093,10 +1135,14 @@ def patch_assignment(
                     ),
                 )
 
+    # --- recompute unit.status after any change ---
+    recompute_unit_status(session, a.unit_id)
+
     session.add(a)
     session.commit()
     session.refresh(a)
     return a
+
 
 # =====================================================
 # Traveller Log
@@ -1231,6 +1277,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
