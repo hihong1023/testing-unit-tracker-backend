@@ -2,3 +2,4 @@ fastapi
 uvicorn
 sqlmodel
 python-multipart
+openpyxl
