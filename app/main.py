@@ -896,6 +896,9 @@ def patch_assignment(
     if not a:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
+    # Fields actually sent by client
+    sent_fields = body.__fields_set__
+
     # --- if skipping, clear tester & dates and mark status ---
     if body.skipped is True:
         a.skipped = True
@@ -904,15 +907,20 @@ def patch_assignment(
         a.end_at = None
         a.status = "SKIPPED"
     else:
-        # only update fields if explicitly provided
-        if body.tester_id is not None:
-            a.tester_id = body.tester_id
-        if body.start_at is not None:
-            a.start_at = body.start_at
-        if body.end_at is not None:
-            a.end_at = body.end_at
-        if body.status is not None:
-            a.status = body.status
+        # ✅ If a field is present in JSON (even if null), update it
+        if "tester_id" in sent_fields:
+            a.tester_id = body.tester_id  # can be None → unassign
+
+        if "start_at" in sent_fields:
+            a.start_at = body.start_at    # None → clear date
+
+        if "end_at" in sent_fields:
+            a.end_at = body.end_at        # None → clear date
+
+        if "status" in sent_fields:
+            if body.status is not None:
+                a.status = body.status
+
         if body.skipped is False:
             # un-skip
             a.skipped = False
@@ -958,6 +966,7 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
