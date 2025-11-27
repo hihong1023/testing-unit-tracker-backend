@@ -51,7 +51,12 @@ class Assignment(SQLModel, table=True):
     prev_passed: bool = False        # your existing field
     skipped: bool = False            # 🔹 NEW: this step is not tested for this unit
 
-
+class AssignmentUpdate(SQLModel):
+    tester_id: Optional[str] = None          # can be set to null to unassign
+    start_at: Optional[datetime] = None      # can be set to null to clear
+    end_at: Optional[datetime] = None        # can be set to null to clear
+    status: Optional[str] = None             # PENDING/RUNNING/DONE/PASS/FAIL
+    skipped: Optional[bool] = None           # mark as Not Tested / back
 
 class Result(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
@@ -85,4 +90,5 @@ class Notification(SQLModel, table=True):
     message: str
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     read: bool = False
+
 
