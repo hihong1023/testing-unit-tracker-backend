@@ -24,6 +24,7 @@ from app.models import (
     Token,
     User,
     TestStep,
+    AssignmentUpdate,
 )
 
 # =====================================================
@@ -457,7 +458,37 @@ def get_unit_details(
 # =====================================================
 # Results & Uploads
 # =====================================================
+def recompute_unit_status(session: Session, unit_id: str) -> None:
+    """
+    Helper: set unit.status to COMPLETED when all assignments are
+    either skipped or finished (DONE/PASS/FAIL). Otherwise mark as IN_PROGRESS.
+    """
+    unit = session.get(Unit, unit_id)
+    if not unit:
+        return
 
+    assignments = session.exec(
+        select(Assignment).where(Assignment.unit_id == unit_id)
+    ).all()
+
+    if not assignments:
+        # no assignments, keep whatever status it has
+        return
+
+    all_done = all(
+        a.skipped or a.status in ("DONE", "PASS", "FAIL")
+        for a in assignments
+    )
+
+    if all_done:
+        unit.status = "COMPLETED"
+    else:
+        # only override if previously completed; otherwise keep existing
+        if unit.status == "COMPLETED":
+            unit.status = "IN_PROGRESS"
+
+    session.add(unit)
+    
 class ResultIn(BaseModel):
     unit_id: str
     step_id: int
@@ -519,7 +550,7 @@ def create_or_update_result(
         )
         session.add(res)
 
-    # ----- update Assignment -----
+    # ----- update Assignment for this step -----
     a = session.exec(
         select(Assignment).where(
             Assignment.unit_id == unit_id,
@@ -528,7 +559,8 @@ def create_or_update_result(
     ).first()
     if a:
         a.tester_id = user.name
-        a.status = "DONE"
+        # store PASS/FAIL so scheduler + matrix see same state
+        a.status = "PASS" if passed else "FAIL"
         session.add(a)
 
     # ----- chain prev_passed to next step -----
@@ -546,13 +578,8 @@ def create_or_update_result(
                 nxt.prev_passed = passed
                 session.add(nxt)
 
-    # ----- mark unit COMPLETED if all assignments DONE -----
-    assigns_all = session.exec(
-        select(Assignment).where(Assignment.unit_id == unit_id)
-    ).all()
-    if assigns_all and all(x.skipped or x.status == "DONE" for x in assigns_all):
-        unit.status = "COMPLETED"
-
+    # ----- recompute unit.status (COMPLETED / IN_PROGRESS) -----
+    recompute_unit_status(session, unit_id)
 
     session.commit()
     session.refresh(res)
@@ -591,8 +618,8 @@ def create_or_update_result(
                     session.add(note)
                     session.commit()
 
-    # ✅ just return `res`, FastAPI → ResultOut
     return res
+
 
 
 # Storage config for uploads
@@ -1204,6 +1231,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
