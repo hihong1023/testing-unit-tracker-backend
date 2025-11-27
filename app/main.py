@@ -7,7 +7,11 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 from pathlib import Path
 import hashlib
-
+from fastapi.responses import StreamingResponse
+import io
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import PatternFill, Font
 
 from sqlmodel import Session, select
 from app.db import init_db, get_session
@@ -682,6 +686,116 @@ async def upload_evidence(
 
     return {"file_id": meta.id, "deduplicated": False}
 
+@app.get("/reports/unit/{unit_id}/traveller.xlsx")
+def export_traveller_log(
+    unit_id: str,
+    supervisor: User = Depends(require_role("supervisor")),
+    session: Session = Depends(get_session),
+):
+    """
+    Export a traveller log for one unit as Excel.
+
+    Layout:
+    Row 1:  step headers  (2. Functionality Test, 3. EIRP..., etc.)
+    Row 2:  tester names  (Tester1, Tester2, ...)
+    Row 3:  finish dates  (20-Nov, 21-Nov, ...)
+    Row 4:  results       (Pass / Fail, coloured)
+    """
+    unit = session.get(Unit, unit_id)
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    # All assignments & results for this unit
+    assignments = session.exec(
+        select(Assignment).where(Assignment.unit_id == unit_id)
+    ).all()
+    results = session.exec(
+        select(Result).where(Result.unit_id == unit_id)
+    ).all()
+
+    # Maps by step_id for quick lookup
+    assignments_by_step = {a.step_id: a for a in assignments}
+    results_by_step = {r.step_id: r for r in results}
+
+    # Use your static STEP order
+    ordered_steps = [STEP_BY_ID[sid] for sid in STEP_IDS_ORDERED]
+
+    # --- Build Excel workbook ---
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Traveller"
+
+    # Helper for formatting dates like "20-Nov"
+    def fmt_date(dt):
+        if not dt:
+            return ""
+        return dt.strftime("%d-%b")
+
+    # Row 1: step headers
+    ws.cell(row=1, column=1, value="Unit")
+    for col_idx, step in enumerate(ordered_steps, start=2):
+        ws.cell(
+            row=1,
+            column=col_idx,
+            value=f"{step.order}. {step.name}",
+        )
+
+    # Row 2: tester names
+    ws.cell(row=2, column=1, value="Tester")
+    for col_idx, step in enumerate(ordered_steps, start=2):
+        a = assignments_by_step.get(step.id)
+        ws.cell(row=2, column=col_idx, value=a.tester_id if a else "")
+
+    # Row 3: finish dates
+    ws.cell(row=3, column=1, value="Date")
+    for col_idx, step in enumerate(ordered_steps, start=2):
+        r = results_by_step.get(step.id)
+        ws.cell(row=3, column=col_idx, value=fmt_date(r.finished_at) if r else "")
+
+    # Row 4: Pass / Fail with colours
+    ws.cell(row=4, column=1, value="Result")
+    for col_idx, step in enumerate(ordered_steps, start=2):
+        r = results_by_step.get(step.id)
+        if not r:
+            continue
+
+        val = "Pass" if r.passed else "Fail"
+        cell = ws.cell(row=4, column=col_idx, value=val)
+
+        if r.passed:
+            cell.fill = PatternFill("solid", fgColor="C6EFCE")  # light green
+            cell.font = Font(color="006100")
+        else:
+            cell.fill = PatternFill("solid", fgColor="FFC7CE")  # light red
+            cell.font = Font(color="9C0006")
+
+    # Column widths & simple alignment
+    for col_idx in range(1, len(ordered_steps) + 2):
+        col_letter = get_column_letter(col_idx)
+        ws.column_dimensions[col_letter].width = 20
+
+    # Top-left cell with unit id
+    ws.cell(row=1, column=1, value=unit_id)
+
+    # --- Return as downloadable file ---
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"{unit_id}_traveller.xlsx"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"'
+    }
+
+    return StreamingResponse(
+        buf,
+        media_type=(
+            "application/"
+            "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers=headers,
+    )
+
 
 # =====================================================
 # Tester: Assignments view (tester home page)
@@ -966,6 +1080,7 @@ def patch_assignment(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
