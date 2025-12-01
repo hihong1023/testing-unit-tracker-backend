@@ -14,7 +14,6 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill, Font
 import re
 from sqlmodel import Session, select
-from app.db import init_db, get_session
 from app.models import (
     Unit,
     Assignment,
@@ -1297,6 +1296,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
