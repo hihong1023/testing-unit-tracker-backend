@@ -3,19 +3,16 @@ import os
 from pathlib import Path
 from typing import Optional
 
-
 from sqlmodel import SQLModel, create_engine, Session
-
 from azure.storage.blob import BlobServiceClient, BlobClient
 
 
 # ========= CONFIG & PATHS =========
 
-# Where the SQLite DB file lives inside the app/container
-# (Keep default same as your current file to avoid breaking anything)
+# Where the SQLite DB file lives inside the container
 SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "./testing_unit_tracker.db")
 
-# Azure Storage env vars (set in Azure portal / local .env)
+# Azure Storage env vars (set in Azure App Service → Environment variables → App settings)
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
 AZURE_STORAGE_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "db-backup")
 AZURE_STORAGE_BLOB_NAME = os.getenv("AZURE_STORAGE_BLOB_NAME", "testing_unit_tracker.db")
@@ -114,19 +111,25 @@ def upload_db_to_blob() -> None:
 
 # ========= DB INIT & SESSION =========
 
-def init_db():
+def init_db() -> None:
     """
     Create tables if they do not exist.
     Call this AFTER download_db_from_blob_if_needed() on startup.
     """
-    # If your models are in app/models.py and imported elsewhere already,
-    # you may not need this import. If tables are not created, uncomment:
-    # from . import models  # noqa: F401
+    # Make sure all models are imported so SQLModel sees them
+    from app import models  # noqa: F401
 
+    print("[DB] Creating tables if they do not exist...")
     SQLModel.metadata.create_all(engine)
+    print("[DB] DB init complete.")
 
 
 def get_session():
+    """
+    Dependency for FastAPI routes. Usage:
+
+        def route(..., session: Session = Depends(get_session)):
+            ...
+    """
     with Session(engine) as session:
         yield session
-
