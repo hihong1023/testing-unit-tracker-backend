@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+
 from sqlmodel import SQLModel, create_engine, Session
 
 from azure.storage.blob import BlobServiceClient, BlobClient
@@ -128,3 +129,4 @@ def init_db():
 def get_session():
     with Session(engine) as session:
         yield session
+
