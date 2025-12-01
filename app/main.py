@@ -43,6 +43,15 @@ origins = [
     "http://localhost:5173",
 ]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,        # you can later tighten to just your frontend origins
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 @app.on_event("startup")
 def on_startup():
     # 1) Ensure we have the latest DB from blob
@@ -59,14 +68,6 @@ def on_shutdown():
     # Upload the current DB to blob so it persists
     upload_db_to_blob()
     print("[APP] Shutdown complete.")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,        # you can later tighten to just your frontend origins
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # =====================================================
 # Auth (simple token-based)
@@ -1296,6 +1297,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
