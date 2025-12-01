@@ -1,19 +1,32 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from uuid import uuid4
 from pathlib import Path
 import hashlib
-from fastapi.responses import StreamingResponse
 import io
+import re
+
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill, Font
-import re
+
 from sqlmodel import Session, select
+
+# 🔹 IMPORTANT: import everything you need from db.py here
+from .db import (
+    engine,
+    get_session,
+    download_db_from_blob_if_needed,
+    upload_db_to_blob,
+    init_db,
+)
+
+# 🔹 Your models
 from app.models import (
     Unit,
     Assignment,
@@ -25,12 +38,7 @@ from app.models import (
     TestStep,
     AssignmentUpdate,
 )
-from .db import (
-    engine,
-    download_db_from_blob_if_needed,
-    upload_db_to_blob,
-    init_db,
-)
+
 # =====================================================
 # App & CORS
 # =====================================================
@@ -1296,6 +1304,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
