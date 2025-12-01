@@ -18,14 +18,13 @@ from openpyxl.styles import PatternFill, Font
 from sqlmodel import Session, select
 
 # 🔹 IMPORTANT: import everything you need from db.py here
-from .db import (
+from app.db import (
     engine,
     get_session,
     download_db_from_blob_if_needed,
     upload_db_to_blob,
     init_db,
 )
-
 # 🔹 Your models
 from app.models import (
     Unit,
@@ -1304,6 +1303,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
