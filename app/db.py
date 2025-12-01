@@ -36,16 +36,21 @@ engine = create_engine(
 
 def _get_blob_client() -> Optional[BlobClient]:
     """
-    Return a BlobClient or None if storage is not configured.
+    Return a BlobClient or None if storage is not configured or invalid.
     """
     if not AZURE_STORAGE_CONNECTION_STRING:
-        # Likely local dev or not configured yet
         print("[DB] AZURE_STORAGE_CONNECTION_STRING not set, skipping blob sync.")
         return None
 
-    service_client = BlobServiceClient.from_connection_string(
-        AZURE_STORAGE_CONNECTION_STRING
-    )
+    try:
+        service_client = BlobServiceClient.from_connection_string(
+            AZURE_STORAGE_CONNECTION_STRING
+        )
+    except ValueError as e:
+        # Invalid connection string → log and skip blob sync instead of crashing
+        print(f"[DB] Invalid AZURE_STORAGE_CONNECTION_STRING, skipping blob sync: {e}")
+        return None
+
     container_client = service_client.get_container_client(AZURE_STORAGE_CONTAINER)
 
     # Ensure container exists (idempotent)
@@ -133,3 +138,4 @@ def get_session():
     """
     with Session(engine) as session:
         yield session
+
