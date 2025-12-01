@@ -26,7 +26,12 @@ from app.models import (
     TestStep,
     AssignmentUpdate,
 )
-
+from .db import (
+    engine,
+    download_db_from_blob_if_needed,
+    upload_db_to_blob,
+    init_db,
+)
 # =====================================================
 # App & CORS
 # =====================================================
@@ -37,9 +42,23 @@ origins = [
     "https://proud-sand-0ed440210.3.azurestaticapps.net",
     "http://localhost:5173",
 ]
+
 @app.on_event("startup")
 def on_startup():
+    # 1) Ensure we have the latest DB from blob
+    download_db_from_blob_if_needed()
+
+    # 2) Ensure tables exist
     init_db()
+
+    print("[APP] Startup complete.")
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    # Upload the current DB to blob so it persists
+    upload_db_to_blob()
+    print("[APP] Shutdown complete.")
 
 app.add_middleware(
     CORSMiddleware,
@@ -1277,6 +1296,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
