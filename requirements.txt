@@ -3,3 +3,5 @@ uvicorn
 sqlmodel
 python-multipart
 openpyxl
+azure-storage-blob
+python-dotenv
