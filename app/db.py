@@ -10,7 +10,10 @@ from azure.storage.blob import BlobServiceClient, BlobClient
 # ========= CONFIG & PATHS =========
 
 # Where the SQLite DB file lives inside the container
-SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "./testing_unit_tracker.db")
+SQLITE_DB_PATH = os.getenv(
+    "SQLITE_DB_PATH",
+    "/home/data/testing_unit_tracker.db",  # any folder under /home is fine
+)
 
 # Azure Storage env vars (set in Azure App Service → Environment variables → App settings)
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -138,4 +141,5 @@ def get_session():
     """
     with Session(engine) as session:
         yield session
+
 
