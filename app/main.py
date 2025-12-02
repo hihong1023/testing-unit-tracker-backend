@@ -118,7 +118,7 @@ def require_role(required_role: str):
 # Preset accounts
 PRESET_TESTERS = [
     "alex", "brian", "ge fan", "jimmy", "kae", "krishnan",
-    "nicholas", "sunny", "yew meng", "yubo", "zhen yang",
+    "nicholas", "sunny", "yew meng", "yubo", "zhen yang", "sook huy"
 ]
 PRESET_SUPERVISORS = ["kian siang", "alban", "hai hong"]
 
@@ -1303,6 +1303,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
