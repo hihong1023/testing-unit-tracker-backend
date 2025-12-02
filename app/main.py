@@ -117,10 +117,10 @@ def require_role(required_role: str):
 
 # Preset accounts
 PRESET_TESTERS = [
-    "alex", "brian", "ge fan", "jimmy", "kae", "krish",
-    "nicholas", "sunny", "yew meng", "yubo", "zhen yang",
+    "Alex", "Brian", "Ge Fan", "Jimmy", "Kae", "Krishnan",
+    "Nicholas", "Sunny", "Yew Meng", "yubo", "Zhen Yang",
 ]
-PRESET_SUPERVISORS = ["kian siang", "alban", "hai hong"]
+PRESET_SUPERVISORS = ["Kian Siang", "Alban", "Hai Hong"]
 
 @app.post("/auth/login", response_model=LoginResponse)
 def login(body: LoginRequest, session: Session = Depends(get_session)):
@@ -1303,6 +1303,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
