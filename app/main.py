@@ -115,20 +115,68 @@ def require_role(required_role: str):
         return user
     return dep
 
-# Preset accounts
+# Preset accounts (flat list for login, etc.)
 PRESET_TESTERS = [
-    "alex", "brian", "ge fan", "jimmy", "kae", "krishnan",
-    "nicholas", "sunny", "yew meng", "yubo", "zhen yang", "sook huy"
+    "alex",
+    "brian",
+    "ge fan",
+    "jimmy",
+    "kae",
+    "krishnan",   # use whichever spelling you actually want
+    "nicholas",
+    "sunny",
+    "yew meng",
+    "yubo",       # <-- this one will be "individual only"
+    "zhen yang",
+    "sook huy",
 ]
+
 PRESET_SUPERVISORS = ["kian siang", "alban", "hai hong"]
+
+# Optional: logical groups of testers
+# (you can adjust this mapping any time)
+PRESET_TESTER_GROUPS: Dict[str, List[str]] = {
+    "Physical Layer": [
+        "sunny",
+        "zhen yang",
+        
+    ],
+    "Reliability": [
+        "brian",
+        "nicholas",
+        "yew meng",
+    ],
+}
+
+
+def groups_for_tester(name: str) -> List[str]:
+    """
+    Return list of group names that this tester belongs to.
+    If tester is not in any group (e.g. 'yubo'), returns [].
+    """
+    name_l = name.lower()
+    groups: List[str] = []
+    for g, members in PRESET_TESTER_GROUPS.items():
+        if any(m.lower() == name_l for m in members):
+            groups.append(g)
+    return groups
+
+
+def group_id(group_name: str) -> str:
+    """
+    Uniform way to encode 'group assignment' in the tester_id field.
+    Example: 'RF' -> 'group:RF'
+    """
+    return f"group:{group_name}"
+
 
 @app.post("/auth/login", response_model=LoginResponse)
 def login(body: LoginRequest, session: Session = Depends(get_session)):
-    username = body.name.strip()
-    if not username:
+    username_raw = body.name.strip()
+    if not username_raw:
         raise HTTPException(status_code=400, detail="Name is required")
 
-    key = username.lower()
+    key = username_raw.lower()
 
     if key in PRESET_SUPERVISORS:
         role = "supervisor"
@@ -137,7 +185,8 @@ def login(body: LoginRequest, session: Session = Depends(get_session)):
     else:
         raise HTTPException(status_code=401, detail="Unknown user")
 
-    user = User(id=str(uuid4()), name=username, role=role)
+    # 🔹 Always store normalized lowercase name
+    user = User(id=str(uuid4()), name=key, role=role)
 
     token_str = str(uuid4())
     token_row = Token(
@@ -151,10 +200,19 @@ def login(body: LoginRequest, session: Session = Depends(get_session)):
 
     return LoginResponse(access_token=token_str, role=role, user=user)
 
+
 @app.get("/testers", response_model=List[str])
 def list_testers(supervisor: User = Depends(require_role("supervisor"))):
     """Scheduler uses this to populate tester dropdown (supervisor only)."""
     return PRESET_TESTERS
+
+@app.get("/testers/groups")
+def list_tester_groups(supervisor: User = Depends(require_role("supervisor"))):
+    """
+    Return mapping of group_name -> list of tester names.
+    Frontend can use this to build 'group' options like 'RF (group)'.
+    """
+    return PRESET_TESTER_GROUPS
 
 # =====================================================
 # Static Test Steps
@@ -883,6 +941,12 @@ def get_tester_assignments(
 
     visible: List[Assignment] = []
 
+    # 🔹 IDs this tester is allowed to see:
+    #   - their own name (e.g. "yubo")
+    #   - any groups they belong to (e.g. "group:RF")
+    tester_groups = groups_for_tester(tester_id)
+    visible_ids = {tester_id} | {group_id(g) for g in tester_groups}
+
     for a in assignments:
         # ignore completed steps
         if a.status not in ("PENDING", "RUNNING"):
@@ -897,9 +961,10 @@ def get_tester_assignments(
             continue
 
         # tester can see:
-        # - steps assigned to them
-        # - unassigned steps (None)
-        if a.tester_id not in (None, tester_id):
+        # - unassigned steps (tester_id is None)
+        # - steps assigned directly to them ("yubo")
+        # - steps assigned to one of their groups ("group:RF")
+        if a.tester_id is not None and a.tester_id not in visible_ids:
             continue
 
         visible.append(a)
@@ -907,6 +972,7 @@ def get_tester_assignments(
     # Sort nicely for UI: by unit, then by step order
     visible.sort(key=lambda x: (x.unit_id, STEP_BY_ID[x.step_id].order))
     return visible
+
 
 @app.get("/tester/schedule", response_model=List[Assignment])
 def get_tester_schedule(
@@ -918,17 +984,21 @@ def get_tester_schedule(
     Full schedule view for a tester.
 
     Used by 'Upcoming Tests (Tester)' page.
-    - Shows ALL assignments assigned to this tester
-      (PENDING/RUNNING/DONE/SKIPPED, regardless of prev_passed or Result).
+    Shows ALL assignments assigned:
+      - directly to this tester
+      - or to any group they belong to
     """
 
     # Security: testers may only query themselves
     if user.role == "tester" and user.name != tester_id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    assignments = session.exec(
-        select(Assignment).where(Assignment.tester_id == tester_id)
-    ).all()
+    tester_groups = groups_for_tester(tester_id)
+    visible_ids = {tester_id} | {group_id(g) for g in tester_groups}
+
+    # load all assignments, then filter by tester_id
+    assignments = session.exec(select(Assignment)).all()
+    assignments = [a for a in assignments if a.tester_id in visible_ids]
 
     # Sort nicely: by start date, then unit, then step order
     assignments.sort(
@@ -939,6 +1009,7 @@ def get_tester_schedule(
         )
     )
     return assignments
+
 
 # =====================================================
 # Scheduling (Supervisor)
@@ -1303,6 +1374,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
