@@ -1010,6 +1010,63 @@ def get_tester_schedule(
     )
     return assignments
 
+# =====================================================
+# Tester: set assignment status (RUNNING / PENDING)
+# =====================================================
+
+class TesterStatusUpdate(BaseModel):
+    status: str  # "RUNNING" or "PENDING"
+
+
+@app.post("/tester/assignments/{assign_id}/status", response_model=Assignment)
+def set_tester_assignment_status(
+    assign_id: str,
+    body: TesterStatusUpdate,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Allow a tester (or supervisor) to mark an assignment as RUNNING or
+    back to PENDING. PASS/FAIL still go through /results.
+    """
+
+    # Only testers or supervisors can call this
+    if user.role not in ("tester", "supervisor"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    a = session.get(Assignment, assign_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    # If caller is a tester, make sure this assignment belongs to them
+    # either directly, or via one of their groups.
+    if user.role == "tester":
+        tester_groups = groups_for_tester(user.name)
+        allowed_ids = {user.name} | {group_id(g) for g in tester_groups}
+        if a.tester_id not in allowed_ids:
+            raise HTTPException(status_code=403, detail="Not your assignment")
+
+    new_status = body.status.upper()
+
+    if new_status not in ("RUNNING", "PENDING"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only RUNNING or PENDING allowed here",
+        )
+
+    a.status = new_status
+
+    # Optional: when starting RUNNING and no start_at yet, auto set start time
+    # if new_status == "RUNNING" and a.start_at is None:
+    #     a.start_at = datetime.utcnow()
+
+    # keep unit status consistent
+    recompute_unit_status(session, a.unit_id)
+
+    session.add(a)
+    session.commit()
+    session.refresh(a)
+    return a
 
 # =====================================================
 # Scheduling (Supervisor)
@@ -1374,6 +1431,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
