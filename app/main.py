@@ -45,7 +45,7 @@ from app.models import (
 app = FastAPI(title="Testing Unit Tracker")
 
 origins = [
-    "https://proud-sand-0ed440210.3.azurestaticapps.net",
+    "https://purple-hill-004014410.2.azurestaticapps.net",
     "http://localhost:5173",
 ]
 
@@ -1431,6 +1431,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
