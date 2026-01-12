@@ -220,19 +220,22 @@ def list_tester_groups(supervisor: User = Depends(require_role("supervisor"))):
 # =====================================================
 
 STEPS: List[TestStep] = [
-    TestStep(id=1, name="Connectivity Test", order=1),
-    TestStep(id=2, name="Functionality Test", order=2),
-    TestStep(id=3, name="EIRP Determination & Stability Calibration", order=3),
-    TestStep(id=4, name="Pre-Vibration Physical Layer Test", order=4),
-    TestStep(id=5, name="Vibration Test", order=5),
-    TestStep(id=6, name="Post-Vibration Physical Layer Test", order=6),
-    TestStep(id=7, name="Thermal Cycling", order=7),
-    TestStep(id=8, name="Post-Thermal Cycling Physical Layer Test", order=8),
-    TestStep(id=9, name="Burn-in Test", order=9),
-    TestStep(id=10, name="EMI/EMC Test", order=10),
-    TestStep(id=11, name="Post-EMI/EMC Physical Layer Test", order=11),
-    TestStep(id=12, name="BGAN Network Emulator Test", order=12),
-    TestStep(id=13, name="Over-the-Air Test", order=13),
+    TestStep(id=1, name="Box Build", order=1),
+    TestStep(id=2, name="Connectivity Test", order=2),
+    TestStep(id=3, name="Functionality Test", order=3),
+    TestStep(id=4, name="EIRP Determination & Stability Calibration", order=4),
+    TestStep(id=5, name="Pre-Vibration Physical Layer Test", order=5),
+    TestStep(id=6, name="Vibration Test", order=6),
+    TestStep(id=7, name="Post-Vibration Physical Layer Test", order=7),
+    TestStep(id=8, name="Thermal Cycling", order=8),
+    TestStep(id=9, name="Post-Thermal Cycling Physical Layer Test", order=9),
+    TestStep(id=10, name="Burn-in Test", order=10),
+    TestStep(id=11, name="EMI/EMC Test", order=11),
+    TestStep(id=12, name="Post-EMI/EMC Physical Layer Test", order=12),
+    TestStep(id=13, name="BGAN Network Emulator Test", order=13),
+    TestStep(id=14, name="Over-the-Air Test", order=14),
+    TestStep(id=15, name="OQC", order=15),
+    TestStep(id=16, name="Packaging", order=16),
 ]
 
 STEP_BY_ID: Dict[int, TestStep] = {s.id: s for s in STEPS}
@@ -1432,6 +1435,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
