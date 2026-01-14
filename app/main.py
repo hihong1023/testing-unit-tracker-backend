@@ -1152,7 +1152,9 @@ def duplicate_schedule(
                 tester_id=src_a.tester_id,
                 start_at=shift(src_a.start_at),
                 end_at=shift(src_a.end_at),
-                status="PENDING",
+
+                status=src_a.status,  # ✅ CHANGE HERE: copy exact status
+
                 prev_passed=(src_a.step_id == STEP_IDS_ORDERED[0]),
             )
             session.add(new_a)
@@ -1161,6 +1163,7 @@ def duplicate_schedule(
 
     session.commit()
     return {"ok": True, "created_units": created_units}
+
 
 class AssignmentPatch(BaseModel):
     tester_id: Optional[str] = None
@@ -1440,6 +1443,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
