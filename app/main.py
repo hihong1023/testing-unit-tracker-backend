@@ -597,7 +597,8 @@ class ResultOut(BaseModel):
     metrics: Dict[str, Any]
     files: List[str]
     submitted_by: Optional[str]
-    finished_at: datetime
+    finished_at: Optional[datetime] = None   # ✅ was datetime
+
 
 @app.post("/results", response_model=ResultOut)
 def create_or_update_result(
@@ -616,7 +617,8 @@ def create_or_update_result(
     step_id = body.step_id
     passed = body.passed
     metrics = body.metrics or {}
-    finished = body.finished_at or datetime.utcnow()
+    finished = body.finished_at  # ✅ keep None if user didn't specify
+
 
     # ----- create / update Result -----
     existing_result = session.exec(
@@ -629,7 +631,11 @@ def create_or_update_result(
     if existing_result:
         existing_result.metrics = metrics
         existing_result.passed = passed
-        existing_result.finished_at = finished
+    
+        # ✅ Only overwrite if frontend actually provided a finished_at
+        if body.finished_at is not None:
+            existing_result.finished_at = body.finished_at
+    
         res = existing_result
     else:
         res = Result(
@@ -639,9 +645,10 @@ def create_or_update_result(
             metrics=metrics,
             files=[],
             submitted_by=user.id,
-            finished_at=finished,
+            finished_at=finished,   # ✅ can be None
         )
         session.add(res)
+
 
     # ----- update Assignment for this step -----
     a = session.exec(
@@ -1156,6 +1163,24 @@ def duplicate_schedule(
                 status=src_a.status,  # ✅ CHANGE HERE: copy exact status
 
                 prev_passed=(src_a.step_id == STEP_IDS_ORDERED[0]),
+
+                # ✅ If status is PASS/FAIL, also create a Result row so progress is correct
+                st = (src_a.status or "").upper()
+                if st in ("PASS", "FAIL"):
+                    passed = st == "PASS"
+                    sched_finished = new_a.end_at or new_a.start_at  # may be None
+                    session.add(
+                        Result(
+                            unit_id=new_id,
+                            step_id=src_a.step_id,
+                            passed=passed,
+                            metrics={},
+                            files=[],
+                            submitted_by=None,
+                            finished_at=sched_finished,  # ✅ None if no dates
+                        )
+                    )
+
             )
             session.add(new_a)
 
@@ -1230,20 +1255,29 @@ def patch_assignment(
         # --- sync PASS / FAIL into Result + next.prev_passed ---
         if "status" in sent_fields and body.status in ("PASS", "FAIL"):
             passed = body.status == "PASS"
-
-            # upsert Result row for this unit / step
+        
+            # ✅ Scheduler date source (may be None)
+            sched_finished = a.end_at or a.start_at  # can be None
+        
             r = session.exec(
                 select(Result).where(
                     Result.unit_id == a.unit_id,
                     Result.step_id == a.step_id,
                 )
             ).first()
-            now = datetime.utcnow()
+        
             if r:
                 r.passed = passed
-                r.finished_at = r.finished_at or now
+        
+                # ✅ DO NOT force a date
+                # ✅ Only fill finished_at if it is currently empty AND scheduler has a date
+                # (Upload result should remain higher priority because it sets finished_at explicitly)
+                if r.finished_at is None and sched_finished is not None:
+                    r.finished_at = sched_finished
+        
                 session.add(r)
             else:
+                # ✅ create result but finished_at stays None if no scheduler dates
                 r = Result(
                     unit_id=a.unit_id,
                     step_id=a.step_id,
@@ -1251,11 +1285,11 @@ def patch_assignment(
                     metrics={},
                     files=[],
                     submitted_by=None,
-                    finished_at=now,
+                    finished_at=sched_finished,  # ✅ can be None
                 )
                 session.add(r)
-
-            # propagate prev_passed to next step
+        
+            # propagate prev_passed to next step (keep your existing code)
             if a.step_id in STEP_IDS_ORDERED:
                 idx = STEP_IDS_ORDERED.index(a.step_id)
                 if idx + 1 < len(STEP_IDS_ORDERED):
@@ -1269,6 +1303,7 @@ def patch_assignment(
                     if nxt:
                         nxt.prev_passed = passed
                         session.add(nxt)
+
 
         # if un-skipping
         if body.skipped is False:
@@ -1443,6 +1478,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
