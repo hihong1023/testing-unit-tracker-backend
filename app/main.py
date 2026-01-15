@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
+SENTINEL_FINISHED_AT = datetime(1970, 1, 1, tzinfo=timezone.utc)
 from uuid import uuid4
 from pathlib import Path
 import hashlib
@@ -618,7 +619,7 @@ def create_or_update_result(
     step_id = body.step_id
     passed = body.passed
     metrics = body.metrics or {}
-    finished = body.finished_at  # ✅ keep None if user didn't specify
+    finished = body.finished_at or SENTINEL_FINISHED_AT
 
 
     # ----- create / update Result -----
@@ -646,7 +647,7 @@ def create_or_update_result(
             metrics=metrics,
             files=[],
             submitted_by=user.id,
-            finished_at=finished,   # ✅ can be None
+            finished_at=finished, 
         )
         session.add(res)
 
@@ -1156,7 +1157,7 @@ def duplicate_schedule(
                 passed = (st == "PASS")
 
                 # date from scheduler if exists, otherwise None
-                sched_finished = new_a.end_at or new_a.start_at
+                sched_finished = new_a.end_at or new_a.start_at or SENTINEL_FINISHED_AT
 
                 session.add(
                     Result(
@@ -1242,7 +1243,7 @@ def patch_assignment(
             passed = body.status == "PASS"
         
             # ✅ Scheduler date source (may be None)
-            sched_finished = a.end_at or a.start_at  # can be None
+            sched_finished = a.end_at or a.start_at or SENTINEL_FINISHED_AT
         
             r = session.exec(
                 select(Result).where(
@@ -1375,9 +1376,8 @@ def add_traveller_sheet_for_unit(
         ws = wb.create_sheet(title=sheet_name)
 
     def fmt_date(dt):
-        if not dt:
-            return ""
-        # 20-Nov format
+        if not dt or dt.date() == SENTINEL_FINISHED_AT.date():
+            return "-"
         return dt.strftime("%d-%b")
 
     # Row 1: step headers
@@ -1463,6 +1463,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
