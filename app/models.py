@@ -66,7 +66,7 @@ class Result(SQLModel, table=True):
     metrics: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     files: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     submitted_by: Optional[str] = None
-    finished_at: datetime = Field(default_factory=datetime.utcnow)
+    finished_at: Optional[datetime] = Field(default=None, nullable=True)
 
 
 class FileMeta(SQLModel, table=True):
@@ -90,5 +90,6 @@ class Notification(SQLModel, table=True):
     message: str
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     read: bool = False
+
 
 
