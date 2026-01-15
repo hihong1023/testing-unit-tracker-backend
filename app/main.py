@@ -1091,7 +1091,7 @@ def set_tester_assignment_status(
 class DuplicateRequest(BaseModel):
     source_unit_id: str
     new_unit_ids: List[str]
-    day_shift: int = 1
+    day_shift: int = 0
 
 @app.post("/schedule/duplicate")
 def duplicate_schedule(
@@ -1099,31 +1099,21 @@ def duplicate_schedule(
     supervisor: User = Depends(require_role("supervisor")),
     session: Session = Depends(get_session),
 ):
-    """
-    Duplicate the schedule (assignments) from one source unit to
-    one or more new units, shifting dates by `day_shift` days.
-
-    Used by the Scheduler "Duplicate Schedule" modal.
-    """
     src_id = body.source_unit_id.strip()
     if not src_id:
         raise HTTPException(status_code=400, detail="source_unit_id required")
 
-    # 1) Source unit must exist
     src_unit = session.get(Unit, src_id)
     if not src_unit:
         raise HTTPException(status_code=404, detail="Source unit not found")
 
-    # 2) Load and sort source assignments by step order
     src_assignments = session.exec(
         select(Assignment).where(Assignment.unit_id == src_id)
     ).all()
     src_assignments.sort(key=lambda a: STEP_BY_ID[a.step_id].order)
 
     def shift(dt: Optional[datetime]) -> Optional[datetime]:
-        if not dt:
-            return None
-        return dt + timedelta(days=body.day_shift)
+        return (dt + timedelta(days=body.day_shift)) if dt else None
 
     created_units: List[str] = []
 
@@ -1132,15 +1122,9 @@ def duplicate_schedule(
         if not new_id:
             continue
 
-        # Don't allow overwrite of existing units
-        existing = session.get(Unit, new_id)
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unit {new_id} already exists",
-            )
+        if session.get(Unit, new_id):
+            raise HTTPException(status_code=400, detail=f"Unit {new_id} already exists")
 
-        # 3) Create the new unit, copying SKU/REV/LOT from source
         new_unit = Unit(
             id=new_id,
             sku=src_unit.sku,
@@ -1151,44 +1135,44 @@ def duplicate_schedule(
         )
         session.add(new_unit)
 
-        # 4) Clone all assignments with shifted dates
         for src_a in src_assignments:
+            # copy assignment including status
             new_a = Assignment(
                 unit_id=new_id,
                 step_id=src_a.step_id,
                 tester_id=src_a.tester_id,
                 start_at=shift(src_a.start_at),
                 end_at=shift(src_a.end_at),
-
-                status=src_a.status,  # ✅ CHANGE HERE: copy exact status
-
-                prev_passed=(src_a.step_id == STEP_IDS_ORDERED[0]),
-
-                # ✅ If status is PASS/FAIL, also create a Result row so progress is correct
-                st = (src_a.status or "").upper()
-                if st in ("PASS", "FAIL"):
-                    passed = st == "PASS"
-                    sched_finished = new_a.end_at or new_a.start_at  # may be None
-                    session.add(
-                        Result(
-                            unit_id=new_id,
-                            step_id=src_a.step_id,
-                            passed=passed,
-                            metrics={},
-                            files=[],
-                            submitted_by=None,
-                            finished_at=sched_finished,  # ✅ None if no dates
-                        )
-                    )
-
+                status=src_a.status,          # ✅ duplicate status
+                prev_passed=src_a.prev_passed, # ✅ duplicate gating
+                skipped=src_a.skipped,         # ✅ duplicate skipped
             )
             session.add(new_a)
+
+            # ✅ If PASS/FAIL, also create Result so Units progress is correct
+            st = (src_a.status or "").upper()
+            if st in ("PASS", "FAIL") and not src_a.skipped:
+                passed = (st == "PASS")
+
+                # date from scheduler if exists, otherwise None
+                sched_finished = new_a.end_at or new_a.start_at
+
+                session.add(
+                    Result(
+                        unit_id=new_id,
+                        step_id=src_a.step_id,
+                        passed=passed,
+                        metrics={},
+                        files=[],
+                        submitted_by=None,
+                        finished_at=sched_finished,  # may be None (after model fix below)
+                    )
+                )
 
         created_units.append(new_id)
 
     session.commit()
     return {"ok": True, "created_units": created_units}
-
 
 class AssignmentPatch(BaseModel):
     tester_id: Optional[str] = None
@@ -1478,6 +1462,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
