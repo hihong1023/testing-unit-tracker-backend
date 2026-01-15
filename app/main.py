@@ -53,9 +53,10 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,        # you can later tighten to just your frontend origins
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -1462,6 +1463,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
