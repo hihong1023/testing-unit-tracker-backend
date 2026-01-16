@@ -618,7 +618,16 @@ def create_or_update_result(
     step_id = body.step_id
     passed = body.passed
     metrics = body.metrics or {}
-    finished = body.finished_at or SENTINEL_FINISHED_AT
+    now = datetime.now(timezone.utc)
+
+    # ✅ finished_at rules:
+    # - tester queue (tester role) with no finished_at => use NOW
+    # - upload page (supervisor) with no finished_at => keep None (so UI shows "-")
+    if body.finished_at is None:
+        finished = now if user.role == "tester" else None
+    else:
+        finished = body.finished_at
+
 
 
     # ----- create / update Result -----
@@ -636,6 +645,12 @@ def create_or_update_result(
         # ✅ Only overwrite if frontend actually provided a finished_at
         if body.finished_at is not None:
             existing_result.finished_at = body.finished_at
+        else:
+            # ✅ tester quick result should stamp NOW if existing was None or sentinel
+            if user.role == "tester":
+                if (existing_result.finished_at is None) or (existing_result.finished_at.date() == SENTINEL_FINISHED_AT.date()):
+                    existing_result.finished_at = now
+
     
         res = existing_result
     else:
@@ -1462,6 +1477,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
