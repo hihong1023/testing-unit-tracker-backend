@@ -50,6 +50,9 @@ class Assignment(SQLModel, table=True):
     status: str = "PENDING"          # "PENDING" | "RUNNING" | "DONE"
     prev_passed: bool = False        # your existing field
     skipped: bool = False            # 🔹 NEW: this step is not tested for this unit
+    actual_start_at: Optional[datetime] = Field(default=None, nullable=True)
+    actual_end_at: Optional[datetime] = Field(default=None, nullable=True)
+
 
 class AssignmentUpdate(SQLModel):
     tester_id: Optional[str] = None          # can be set to null to unassign
@@ -90,6 +93,7 @@ class Notification(SQLModel, table=True):
     message: str
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     read: bool = False
+
 
 
 
