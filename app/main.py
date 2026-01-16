@@ -1087,6 +1087,14 @@ def set_tester_assignment_status(
         )
 
     a.status = new_status
+    now = datetime.now(timezone.utc)
+
+    # ✅ When tester starts RUNNING, store actual start timestamp once
+    if new_status == "RUNNING" and a.actual_start_at is None:
+        a.actual_start_at = now
+    
+    # (Optional) if tester reverts to PENDING, don't delete the actual time
+    # if new_status == "PENDING": pass
 
     # Optional: when starting RUNNING and no start_at yet, auto set start time
     # if new_status == "RUNNING" and a.start_at is None:
@@ -1477,6 +1485,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
