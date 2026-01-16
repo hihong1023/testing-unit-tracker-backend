@@ -4,7 +4,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 SENTINEL_FINISHED_AT = datetime(1970, 1, 1, tzinfo=timezone.utc)
 from uuid import uuid4
 from pathlib import Path
@@ -1463,6 +1463,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
