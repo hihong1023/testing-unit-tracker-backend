@@ -302,6 +302,73 @@ def send_teams_message(webhook_url: str, title: str, lines: list[str]) -> None:
 
     with urllib.request.urlopen(req, timeout=6) as resp:
         _ = resp.read()
+
+
+
+TEAMS_FLOW_DM_URL = os.getenv("TEAMS_FLOW_DM_URL", "").strip()
+
+def _slug_env(s: str) -> str:
+    s = (s or "").strip().upper()
+    s = re.sub(r"[^A-Z0-9]+", "_", s)
+    return s.strip("_")
+
+def tester_upn(name: str) -> str | None:
+    # name like "alex" or "zhen yang"
+    key = f"TESTER_UPN_{_slug_env(name)}"
+    return os.getenv(key)
+
+def assignee_upns(tester_id: str | None) -> list[tuple[str, str]]:
+    """
+    Returns list of (display_name, upn) recipients.
+    Supports:
+      - "alex"
+      - "group:Physical Layer"  -> expands to all members in that group
+    """
+    if not tester_id:
+        return []
+
+    recips: list[tuple[str, str]] = []
+
+    if tester_id.startswith("group:"):
+        group_name = tester_id.split(":", 1)[1].strip()
+        members = PRESET_TESTER_GROUPS.get(group_name, [])
+        for m in members:
+            upn = tester_upn(m)
+            if upn:
+                recips.append((m, upn))
+    else:
+        upn = tester_upn(tester_id)
+        if upn:
+            recips.append((tester_id, upn))
+
+    # de-dupe
+    seen = set()
+    out: list[tuple[str, str]] = []
+    for name, upn in recips:
+        k = upn.lower()
+        if k not in seen:
+            seen.add(k)
+            out.append((name, upn))
+    return out
+
+def send_flow_dm(payload: dict) -> None:
+    """
+    Calls your Power Automate 'When an HTTP request is received' URL.
+    """
+    if not TEAMS_FLOW_DM_URL:
+        print("[TEAMS] TEAMS_FLOW_DM_URL not set, skipping DM.")
+        return
+
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        TEAMS_FLOW_DM_URL,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        _ = resp.read()
+
 # =====================================================
 # Static Test Steps
 # =====================================================
@@ -685,6 +752,7 @@ class ResultOut(BaseModel):
 @app.post("/results", response_model=ResultOut)
 def create_or_update_result(
     body: ResultIn,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
@@ -786,17 +854,15 @@ def create_or_update_result(
         idx = STEP_IDS_ORDERED.index(step_id)
         if idx + 1 < len(STEP_IDS_ORDERED):
             next_step_id = STEP_IDS_ORDERED[idx + 1]
-
+    
             next_assign = session.exec(
                 select(Assignment).where(
                     Assignment.unit_id == unit_id,
                     Assignment.step_id == next_step_id,
                 )
             ).first()
-
-            # only notify if next step is assigned (individual or group)
+    
             if next_assign and next_assign.tester_id:
-                # prevent duplicates
                 dup = session.exec(
                     select(Notification).where(
                         Notification.tester_id == next_assign.tester_id,
@@ -805,14 +871,13 @@ def create_or_update_result(
                         Notification.to_step_id == next_step_id,
                     )
                 ).first()
-
+    
                 if not dup:
-                    # 1) Save in-app notification
                     msg = (
                         f"Unit {unit_id} is ready for "
                         f"{STEP_BY_ID[next_step_id].name} (previous step passed)."
                     )
-
+    
                     note = Notification(
                         tester_id=next_assign.tester_id,
                         unit_id=unit_id,
@@ -822,29 +887,26 @@ def create_or_update_result(
                     )
                     session.add(note)
                     session.commit()
-
-                    # 2) Send Teams notification (best-effort)
+    
                     frontend_url = os.getenv("FRONTEND_URL", "").rstrip("/")
                     unit_link = f"{frontend_url}/units/{urllib.parse.quote(unit_id)}" if frontend_url else ""
-
-                    title = "✅ Next Test Ready"
-                    lines = [
-                        f"<b>Unit:</b> {unit_id}",
-                        f"<b>Previous step passed:</b> {STEP_BY_ID[step_id].name}",
-                        f"<b>Next step:</b> {STEP_BY_ID[next_step_id].name}",
-                        f"<b>Assigned to:</b> {next_assign.tester_id}",
-                    ]
-                    if unit_link:
-                        lines.append(f"<a href='{unit_link}'>Open Unit Detail</a>")
-
-                    webhook_urls = _teams_webhooks_for_assignee(next_assign.tester_id)
-
-                    for url in webhook_urls:
-                        try:
-                            send_teams_message(url, title, lines)
-                        except Exception as e:
-                            # do not fail the API because Teams failed
-                            print(f"[TEAMS] notify failed for {next_assign.tester_id}: {e}")
+    
+                    # Build recipients (individual or expand group)
+                    recips = assignee_upns(next_assign.tester_id)
+    
+                    for display_name, upn in recips:
+                        payload = {
+                            "unit_id": unit_id,
+                            "from_step": STEP_BY_ID[step_id].name,
+                            "to_step": STEP_BY_ID[next_step_id].name,
+                            "assignee": display_name,
+                            "assignee_upn": upn,
+                            "unit_url": unit_link,
+                            "message": msg,
+                        }
+    
+                        # ✅ send async so your API doesn't slow down / fail
+                        background_tasks.add_task(send_flow_dm, payload)
 
 
     return res
@@ -1598,6 +1660,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
