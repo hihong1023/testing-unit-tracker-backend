@@ -11,6 +11,13 @@ from pathlib import Path
 import hashlib
 import io
 import re
+import httpx
+from fastapi import BackgroundTasks
+import os
+import json
+import urllib.request
+import urllib.error
+import urllib.parse
 
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
@@ -221,6 +228,81 @@ def list_tester_groups(supervisor: User = Depends(require_role("supervisor"))):
     """
     return PRESET_TESTER_GROUPS
 
+
+# =====================================================
+# Teams Notification
+# =====================================================
+FRONTEND_URL = os.getenv("FRONTEND_URL", "").rstrip("/")
+
+
+def _slug_env(s: str) -> str:
+    s = (s or "").strip().upper()
+    s = re.sub(r"[^A-Z0-9]+", "_", s)
+    return s.strip("_")
+
+
+def _teams_webhooks_for_assignee(tester_id: str | None) -> list[str]:
+    """
+    Returns webhook URLs for a given assignee.
+    Env vars supported:
+
+    - TEAMS_WEBHOOK_DEFAULT
+    - TEAMS_WEBHOOK_TESTER_<NAME>     e.g. TEAMS_WEBHOOK_TESTER_ALEX
+    - TEAMS_WEBHOOK_GROUP_<GROUP>     e.g. TEAMS_WEBHOOK_GROUP_PHYSICAL_LAYER
+
+    Assignee formats:
+    - "alex"
+    - "group:Physical Layer"
+    """
+    if not tester_id:
+        return []
+
+    urls: list[str] = []
+
+    if tester_id.startswith("group:"):
+        group_name = tester_id.split(":", 1)[1].strip()
+        url = os.getenv(f"TEAMS_WEBHOOK_GROUP_{_slug_env(group_name)}")
+        if url:
+            urls.append(url)
+    else:
+        # Optional per-tester routing (if you create these env vars)
+        per_user = os.getenv(f"TEAMS_WEBHOOK_TESTER_{_slug_env(tester_id)}")
+        if per_user:
+            urls.append(per_user)
+
+    # Always fallback to default if nothing matched
+    if not urls:
+        default_url = os.getenv("TEAMS_WEBHOOK_DEFAULT")
+        if default_url:
+            urls.append(default_url)
+
+    # de-dupe
+    return list(dict.fromkeys([u for u in urls if u]))
+
+
+def send_teams_message(webhook_url: str, title: str, lines: list[str]) -> None:
+    """
+    Sends an Office365 Connector MessageCard to Teams Incoming Webhook / Workflows.
+    """
+    payload = {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "summary": title,
+        "themeColor": "0078D7",
+        "title": title,
+        "text": "<br/>".join(lines),
+    }
+
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        webhook_url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urllib.request.urlopen(req, timeout=6) as resp:
+        _ = resp.read()
 # =====================================================
 # Static Test Steps
 # =====================================================
@@ -700,18 +782,22 @@ def create_or_update_result(
     session.commit()
     session.refresh(res)
 
-    # ----- create notification for next tester (same as before) -----
+    # ----- create notification for next tester (DB + Teams) -----
     if passed and step_id in STEP_IDS_ORDERED:
         idx = STEP_IDS_ORDERED.index(step_id)
         if idx + 1 < len(STEP_IDS_ORDERED):
             next_step_id = STEP_IDS_ORDERED[idx + 1]
+
             next_assign = session.exec(
                 select(Assignment).where(
                     Assignment.unit_id == unit_id,
                     Assignment.step_id == next_step_id,
                 )
             ).first()
+
+            # only notify if next step is assigned (individual or group)
             if next_assign and next_assign.tester_id:
+                # prevent duplicates
                 dup = session.exec(
                     select(Notification).where(
                         Notification.tester_id == next_assign.tester_id,
@@ -720,19 +806,47 @@ def create_or_update_result(
                         Notification.to_step_id == next_step_id,
                     )
                 ).first()
+
                 if not dup:
+                    # 1) Save in-app notification
+                    msg = (
+                        f"Unit {unit_id} is ready for "
+                        f"{STEP_BY_ID[next_step_id].name} (previous step passed)."
+                    )
+
                     note = Notification(
                         tester_id=next_assign.tester_id,
                         unit_id=unit_id,
                         from_step_id=step_id,
                         to_step_id=next_step_id,
-                        message=(
-                            f"Unit {unit_id} is ready for "
-                            f"{STEP_BY_ID[next_step_id].name} (previous step passed)."
-                        ),
+                        message=msg,
                     )
                     session.add(note)
                     session.commit()
+
+                    # 2) Send Teams notification (best-effort)
+                    frontend_url = os.getenv("FRONTEND_URL", "").rstrip("/")
+                    unit_link = f"{frontend_url}/units/{urllib.parse.quote(unit_id)}" if frontend_url else ""
+
+                    title = "✅ Next Test Ready"
+                    lines = [
+                        f"<b>Unit:</b> {unit_id}",
+                        f"<b>Previous step passed:</b> {STEP_BY_ID[step_id].name}",
+                        f"<b>Next step:</b> {STEP_BY_ID[next_step_id].name}",
+                        f"<b>Assigned to:</b> {next_assign.tester_id}",
+                    ]
+                    if unit_link:
+                        lines.append(f"<a href='{unit_link}'>Open Unit Detail</a>")
+
+                    webhook_urls = _teams_webhooks_for_assignee(next_assign.tester_id)
+
+                    for url in webhook_urls:
+                        try:
+                            send_teams_message(url, title, lines)
+                        except Exception as e:
+                            # do not fail the API because Teams failed
+                            print(f"[TEAMS] notify failed for {next_assign.tester_id}: {e}")
+
 
     return res
 
@@ -1485,6 +1599,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
