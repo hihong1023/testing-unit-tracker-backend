@@ -11,7 +11,6 @@ from pathlib import Path
 import hashlib
 import io
 import re
-import httpx
 from fastapi import BackgroundTasks
 import os
 import json
@@ -1599,6 +1598,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
