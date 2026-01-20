@@ -21,7 +21,8 @@ import urllib.parse
 
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import PatternFilFl, Font
+from openpyxl.styles import PatternFill, Font
+
 
 from sqlmodel import Session, select
 
@@ -1567,6 +1568,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
