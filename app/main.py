@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 SENTINEL_FINISHED_AT = datetime(1970, 1, 1, tzinfo=timezone.utc)
 from uuid import uuid4
 from pathlib import Path
-import hashlib
+import hashlibF
 import io
 import re
 from fastapi import BackgroundTasks
@@ -20,7 +20,7 @@ import urllib.parse
 
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import PatternFill, Font
+from openpyxl.styles import PatternFilFl, Font
 
 from sqlmodel import Session, select
 
@@ -229,30 +229,16 @@ def list_tester_groups(supervisor: User = Depends(require_role("supervisor"))):
 
 
 # =====================================================
-# Teams Notification
+# Teams Notification (Option A: channel via Workflows webhook)
 # =====================================================
 FRONTEND_URL = os.getenv("FRONTEND_URL", "").rstrip("/")
-
 
 def _slug_env(s: str) -> str:
     s = (s or "").strip().upper()
     s = re.sub(r"[^A-Z0-9]+", "_", s)
     return s.strip("_")
 
-
 def _teams_webhooks_for_assignee(tester_id: str | None) -> list[str]:
-    """
-    Returns webhook URLs for a given assignee.
-    Env vars supported:
-
-    - TEAMS_WEBHOOK_DEFAULT
-    - TEAMS_WEBHOOK_TESTER_<NAME>     e.g. TEAMS_WEBHOOK_TESTER_ALEX
-    - TEAMS_WEBHOOK_GROUP_<GROUP>     e.g. TEAMS_WEBHOOK_GROUP_PHYSICAL_LAYER
-
-    Assignee formats:
-    - "alex"
-    - "group:Physical Layer"
-    """
     if not tester_id:
         return []
 
@@ -264,34 +250,18 @@ def _teams_webhooks_for_assignee(tester_id: str | None) -> list[str]:
         if url:
             urls.append(url)
     else:
-        # Optional per-tester routing (if you create these env vars)
         per_user = os.getenv(f"TEAMS_WEBHOOK_TESTER_{_slug_env(tester_id)}")
         if per_user:
             urls.append(per_user)
 
-    # Always fallback to default if nothing matched
     if not urls:
         default_url = os.getenv("TEAMS_WEBHOOK_DEFAULT")
         if default_url:
             urls.append(default_url)
 
-    # de-dupe
     return list(dict.fromkeys([u for u in urls if u]))
 
-
-def send_teams_message(webhook_url: str, title: str, lines: list[str]) -> None:
-    """
-    Sends an Office365 Connector MessageCard to Teams Incoming Webhook / Workflows.
-    """
-    payload = {
-        "@type": "MessageCard",
-        "@context": "http://schema.org/extensions",
-        "summary": title,
-        "themeColor": "0078D7",
-        "title": title,
-        "text": "<br/>".join(lines),
-    }
-
+def send_teams_workflow(webhook_url: str, payload: dict) -> None:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         webhook_url,
@@ -299,75 +269,11 @@ def send_teams_message(webhook_url: str, title: str, lines: list[str]) -> None:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-
-    with urllib.request.urlopen(req, timeout=6) as resp:
-        _ = resp.read()
-
-
-
-TEAMS_FLOW_DM_URL = os.getenv("TEAMS_FLOW_DM_URL", "").strip()
-
-def _slug_env(s: str) -> str:
-    s = (s or "").strip().upper()
-    s = re.sub(r"[^A-Z0-9]+", "_", s)
-    return s.strip("_")
-
-def tester_upn(name: str) -> str | None:
-    # name like "alex" or "zhen yang"
-    key = f"TESTER_UPN_{_slug_env(name)}"
-    return os.getenv(key)
-
-def assignee_upns(tester_id: str | None) -> list[tuple[str, str]]:
-    """
-    Returns list of (display_name, upn) recipients.
-    Supports:
-      - "alex"
-      - "group:Physical Layer"  -> expands to all members in that group
-    """
-    if not tester_id:
-        return []
-
-    recips: list[tuple[str, str]] = []
-
-    if tester_id.startswith("group:"):
-        group_name = tester_id.split(":", 1)[1].strip()
-        members = PRESET_TESTER_GROUPS.get(group_name, [])
-        for m in members:
-            upn = tester_upn(m)
-            if upn:
-                recips.append((m, upn))
-    else:
-        upn = tester_upn(tester_id)
-        if upn:
-            recips.append((tester_id, upn))
-
-    # de-dupe
-    seen = set()
-    out: list[tuple[str, str]] = []
-    for name, upn in recips:
-        k = upn.lower()
-        if k not in seen:
-            seen.add(k)
-            out.append((name, upn))
-    return out
-
-def send_flow_dm(payload: dict) -> None:
-    """
-    Calls your Power Automate 'When an HTTP request is received' URL.
-    """
-    if not TEAMS_FLOW_DM_URL:
-        print("[TEAMS] TEAMS_FLOW_DM_URL not set, skipping DM.")
-        return
-
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        TEAMS_FLOW_DM_URL,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        _ = resp.read()
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except Exception as e:
+        print(f"[TEAMS] webhook failed: {e}")
 
 # =====================================================
 # Static Test Steps
@@ -896,17 +802,17 @@ def create_or_update_result(
     
                     for display_name, upn in recips:
                         payload = {
-                            "unit_id": unit_id,
-                            "from_step": STEP_BY_ID[step_id].name,
-                            "to_step": STEP_BY_ID[next_step_id].name,
-                            "assignee": display_name,
-                            "assignee_upn": upn,
-                            "unit_url": unit_link,
-                            "message": msg,
+                          "title": "✅ Next Test Ready",
+                          "unit": unit_id,
+                          "from_step": STEP_BY_ID[step_id].name,
+                          "to_step": STEP_BY_ID[next_step_id].name,
+                          "assignee": next_assign.tester_id,
+                          "link": unit_link,
                         }
-    
-                        # ✅ send async so your API doesn't slow down / fail
-                        background_tasks.add_task(send_flow_dm, payload)
+                        
+                        for url in _teams_webhooks_for_assignee(next_assign.tester_id):
+                            send_teams_workflow(url, payload)
+
 
 
     return res
@@ -1660,6 +1566,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
