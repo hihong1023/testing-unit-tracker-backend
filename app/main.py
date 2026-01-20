@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 SENTINEL_FINISHED_AT = datetime(1970, 1, 1, tzinfo=timezone.utc)
 from uuid import uuid4
@@ -11,7 +11,6 @@ from pathlib import Path
 import hashlib
 import io
 import re
-from fastapi import BackgroundTasks
 import os
 import json
 import urllib.request
@@ -799,22 +798,19 @@ def create_or_update_result(
                     frontend_url = os.getenv("FRONTEND_URL", "").rstrip("/")
                     unit_link = f"{frontend_url}/units/{urllib.parse.quote(unit_id)}" if frontend_url else ""
     
-                    # Build recipients (individual or expand group)
-                    recips = assignee_upns(next_assign.tester_id)
-    
-                    for display_name, upn in recips:
-                        payload = {
-                          "title": "✅ Next Test Ready",
-                          "unit": unit_id,
-                          "from_step": STEP_BY_ID[step_id].name,
-                          "to_step": STEP_BY_ID[next_step_id].name,
-                          "assignee": next_assign.tester_id,
-                          "link": unit_link,
-                        }
-                        
-                        for url in _teams_webhooks_for_assignee(next_assign.tester_id):
-                            send_teams_workflow(url, payload)
+                    payload = {
+                        "title": "✅ Next Test Ready",
+                        "unit": unit_id,
+                        "from_step": STEP_BY_ID[step_id].name,
+                        "to_step": STEP_BY_ID[next_step_id].name,
+                        "assignee": next_assign.tester_id,
+                        "link": unit_link,
+                    }
+                    
+                    for url in _teams_webhooks_for_assignee(next_assign.tester_id):
+                        background_tasks.add_task(send_teams_workflow, url, payload)
 
+                    
 
 
     return res
@@ -1568,6 +1564,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
