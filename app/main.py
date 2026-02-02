@@ -139,6 +139,7 @@ PRESET_TESTERS = [
     "yubo",       # <-- this one will be "individual only"
     "zhen yang",
     "sook huy",
+    "jennifer",
 ]
 
 PRESET_SUPERVISORS = ["kian siang", "alban", "hai hong"]
@@ -1565,6 +1566,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
