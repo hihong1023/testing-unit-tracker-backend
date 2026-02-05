@@ -1313,8 +1313,9 @@ def tester_patch_assignment(
     if body.sub_checks is not None:
         a.sub_checks = body.sub_checks
 
-    if body.remark is not None:
+    if "remark" in body.__fields_set__:
         a.remark = body.remark
+
 
     session.add(a)
     session.commit()
@@ -1617,6 +1618,7 @@ def migrate_add_columns(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
