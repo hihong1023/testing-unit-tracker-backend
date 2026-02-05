@@ -1279,6 +1279,48 @@ def duplicate_schedule(
     session.commit()
     return {"ok": True, "created_units": created_units}
 
+
+# =====================================================
+# Remarks
+# =====================================================
+
+class TesterAssignmentPatch(BaseModel):
+    sub_checks: Optional[Dict[str, bool]] = None
+    remark: Optional[str] = None
+
+
+@app.patch("/tester/assignments/{assign_id}", response_model=Assignment)
+def tester_patch_assignment(
+    assign_id: str,
+    body: TesterAssignmentPatch,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if user.role != "tester":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    a = session.get(Assignment, assign_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    # same ownership logic you already use
+    tester_groups = groups_for_tester(user.name)
+    allowed_ids = {user.name} | {group_id(g) for g in tester_groups}
+
+    if a.tester_id not in allowed_ids:
+        raise HTTPException(status_code=403, detail="Not your assignment")
+
+    if body.sub_checks is not None:
+        a.sub_checks = body.sub_checks
+
+    if body.remark is not None:
+        a.remark = body.remark
+
+    session.add(a)
+    session.commit()
+    session.refresh(a)
+    return a
+
 class AssignmentPatch(BaseModel):
     tester_id: Optional[str] = None
     start_at: Optional[datetime] = None
@@ -1566,6 +1608,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
