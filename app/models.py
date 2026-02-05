@@ -65,6 +65,7 @@ class AssignmentUpdate(SQLModel):
     end_at: Optional[datetime] = None        # can be set to null to clear
     status: Optional[str] = None             # PENDING/RUNNING/DONE/PASS/FAIL
     skipped: Optional[bool] = None           # mark as Not Tested / back
+    remark: Optional[str] = None
 
 class Result(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
@@ -98,6 +99,7 @@ class Notification(SQLModel, table=True):
     message: str
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     read: bool = False
+
 
 
 
