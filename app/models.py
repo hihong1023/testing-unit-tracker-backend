@@ -52,8 +52,13 @@ class Assignment(SQLModel, table=True):
     skipped: bool = False            # 🔹 NEW: this step is not tested for this unit
     actual_start_at: Optional[datetime] = Field(default=None, nullable=True)
     actual_end_at: Optional[datetime] = Field(default=None, nullable=True)
-
-
+    
+    sub_checks: Optional[Dict[str, bool]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+    )
+    remark: Optional[str] = None
+    
 class AssignmentUpdate(SQLModel):
     tester_id: Optional[str] = None          # can be set to null to unassign
     start_at: Optional[datetime] = None      # can be set to null to clear
@@ -93,6 +98,7 @@ class Notification(SQLModel, table=True):
     message: str
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     read: bool = False
+
 
 
 
