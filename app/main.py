@@ -24,7 +24,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill, Font
 
 
-from sqlmodel import Session, select
+from sqlmodel import Session, select, text
 
 # 🔹 IMPORTANT: import everything you need from db.py here
 from app.db import (
@@ -1600,7 +1600,16 @@ def export_traveller_bulk_xlsx(
         ),
         headers=headers,
     )
-
+    
+@app.post("/admin/migrate/add-pre-vibration-fields")
+def migrate_add_columns(
+    supervisor: User = Depends(require_role("supervisor")),
+    session: Session = Depends(get_session),
+):
+    session.exec(text("ALTER TABLE assignment ADD COLUMN sub_checks TEXT"))
+    session.exec(text("ALTER TABLE assignment ADD COLUMN remark TEXT"))
+    session.commit()
+    return {"ok": True}
 # =====================================================
 # Root
 # =====================================================
@@ -1608,6 +1617,7 @@ def export_traveller_bulk_xlsx(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
