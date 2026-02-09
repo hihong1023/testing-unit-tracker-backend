@@ -26,6 +26,10 @@ from openpyxl.styles import PatternFill, Font
 
 from sqlmodel import Session, select, text
 
+
+from telegram import send_telegram_message
+
+
 # 🔹 IMPORTANT: import everything you need from db.py here
 from app.db import (
     engine,
@@ -230,53 +234,6 @@ def list_tester_groups(supervisor: User = Depends(require_role("supervisor"))):
     """
     return PRESET_TESTER_GROUPS
 
-
-# =====================================================
-# Teams Notification (Option A: channel via Workflows webhook)
-# =====================================================
-FRONTEND_URL = os.getenv("FRONTEND_URL", "").rstrip("/")
-
-def _slug_env(s: str) -> str:
-    s = (s or "").strip().upper()
-    s = re.sub(r"[^A-Z0-9]+", "_", s)
-    return s.strip("_")
-
-def _teams_webhooks_for_assignee(tester_id: str | None) -> list[str]:
-    if not tester_id:
-        return []
-
-    urls: list[str] = []
-
-    if tester_id.startswith("group:"):
-        group_name = tester_id.split(":", 1)[1].strip()
-        url = os.getenv(f"TEAMS_WEBHOOK_GROUP_{_slug_env(group_name)}")
-        if url:
-            urls.append(url)
-    else:
-        per_user = os.getenv(f"TEAMS_WEBHOOK_TESTER_{_slug_env(tester_id)}")
-        if per_user:
-            urls.append(per_user)
-
-    if not urls:
-        default_url = os.getenv("TEAMS_WEBHOOK_DEFAULT")
-        if default_url:
-            urls.append(default_url)
-
-    return list(dict.fromkeys([u for u in urls if u]))
-
-def send_teams_workflow(webhook_url: str, payload: dict) -> None:
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        webhook_url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            resp.read()
-    except Exception as e:
-        print(f"[TEAMS] webhook failed: {e}")
 
 # =====================================================
 # Static Test Steps
@@ -800,17 +757,16 @@ def create_or_update_result(
                     frontend_url = os.getenv("FRONTEND_URL", "").rstrip("/")
                     unit_link = f"{frontend_url}/units/{urllib.parse.quote(unit_id)}" if frontend_url else ""
     
-                    payload = {
-                        "title": "✅ Next Test Ready",
-                        "unit": unit_id,
-                        "from_step": STEP_BY_ID[step_id].name,
-                        "to_step": STEP_BY_ID[next_step_id].name,
-                        "assignee": next_assign.tester_id,
-                        "link": unit_link,
-                    }
+                    msg = (
+                        f"🧪 *Next Test Ready*\n\n"
+                        f"*Unit:* `{unit_id}`\n"
+                        f"*From:* {STEP_BY_ID[step_id].name}\n"
+                        f"*Next:* {STEP_BY_ID[next_step_id].name}\n"
+                        f"*Assigned To:* {next_assign.tester_id}\n\n"
+                        f"Previous step PASSED ✅"
+                    )
                     
-                    for url in _teams_webhooks_for_assignee(next_assign.tester_id):
-                        background_tasks.add_task(send_teams_workflow, url, payload)
+                    background_tasks.add_task(send_telegram_message, msg)
 
                     
 
@@ -1611,6 +1567,14 @@ def migrate_add_columns(
     session.exec(text("ALTER TABLE assignment ADD COLUMN remark TEXT"))
     session.commit()
     return {"ok": True}
+
+@app.post("/debug/telegram-test")
+def telegram_test():
+    send_telegram_message(
+        "✅ FastAPI → Telegram is working"
+    )
+    return {"ok": True}
+
 # =====================================================
 # Root
 # =====================================================
@@ -1618,6 +1582,7 @@ def migrate_add_columns(
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
