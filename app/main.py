@@ -168,6 +168,45 @@ PRESET_TESTER_GROUPS: Dict[str, List[str]] = {
     ],
 }
 
+# =====================================================
+# Telegram mention helpers (Option A)
+# =====================================================
+
+# Map tester name -> Telegram username (must be real TG usernames)
+TELEGRAM_USERNAMES = {
+    "sunny": "@hihong1023",
+    "zhen yang": "@hihong1023",
+    "brian": "@hihong1023",
+    "nicholas": "@hihong1023",
+    "yew meng": "@hihong1023",
+    "krishnan": "@hihong1023",
+    "sook huy": "@hihong1023",
+}
+
+def pick_tester_from_group(group_name: str) -> Optional[str]:
+    """
+    Option A: pick the FIRST tester in the group.
+    Deterministic and simple.
+    """
+    members = PRESET_TESTER_GROUPS.get(group_name, [])
+    return members[0] if members else None
+
+def resolve_telegram_mention(tester_id: str) -> str:
+    """
+    tester_id can be:
+      - 'sunny'
+      - 'group:Physical Layer'
+    Returns a Telegram @mention or a safe fallback name.
+    """
+    if tester_id.startswith("group:"):
+        group = tester_id.split(":", 1)[1]
+        picked = pick_tester_from_group(group)
+        if not picked:
+            return f"{group} (no tester available)"
+        return TELEGRAM_USERNAMES.get(picked, picked)
+
+    # individual tester
+    return TELEGRAM_USERNAMES.get(tester_id, tester_id)
 
 def groups_for_tester(name: str) -> List[str]:
     """
@@ -1582,6 +1621,7 @@ def telegram_test():
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
