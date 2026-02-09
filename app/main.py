@@ -174,13 +174,19 @@ PRESET_TESTER_GROUPS: Dict[str, List[str]] = {
 
 # Map tester name -> Telegram username (must be real TG usernames)
 TELEGRAM_USERNAMES = {
-    "sunny": "@hihong1023",
-    "zhen yang": "@hihong1023",
+    "alex": "@hihong1023",
     "brian": "@hihong1023",
-    "nicholas": "@hihong1023",
-    "yew meng": "@hihong1023",
+    "ge fan": "@hihong1023",
+    "jimmy": "@hihong1023",
+    "kae": "@hihong1023",
     "krishnan": "@hihong1023",
+    "nicholas": "@hihong1023",
+    "sunny": "@hihong1023",
+    "yew meng": "@hihong1023",
+    "yubo": "@hihong1023",  
+    "zhen yang": "@hihong1023",
     "sook huy": "@hihong1023",
+
 }
 
 def pick_tester_from_group(group_name: str) -> Optional[str]:
@@ -798,16 +804,19 @@ def create_or_update_result(
     
                     mention = resolve_telegram_mention(next_assign.tester_id)
                     
+                    now_str = datetime.now(ZoneInfo("Asia/Singapore")).strftime("%Y-%m-%d %H:%M")
+                    
                     msg = (
-                        "🧪 {unit_id} is Ready for {STEP_BY_ID[next_step_id].name}\n\n"
-                        f"Unit: {unit_id}\n"
-                        f"From: {STEP_BY_ID[step_id].name}\n"
-                        f"Next: {STEP_BY_ID[next_step_id].name}\n"
-                        f"Assigned To: {mention}\n\n"
-                        "Previous step PASSED ✅"
+                        f"{mention}\n\n"
+                        f"{unit_id} is ready for {STEP_BY_ID[next_step_id].name}\n"
+                        f"{STEP_BY_ID[step_id].name} passed\n\n"
+                        f"Date & Time: {now_str}\n"
+                        f"Previous tester: {a.tester_id}\n"
+                        f"Assigned to: {next_assign.tester_id}"
                     )
                     
                     background_tasks.add_task(send_telegram_message, msg)
+
 
 
                     
@@ -1624,6 +1633,7 @@ def telegram_test():
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
