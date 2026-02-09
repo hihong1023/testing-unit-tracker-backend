@@ -27,7 +27,7 @@ from openpyxl.styles import PatternFill, Font
 from sqlmodel import Session, select, text
 
 
-from telegram import send_telegram_message
+from app.telegram import send_telegram_message
 
 
 # 🔹 IMPORTANT: import everything you need from db.py here
@@ -1582,6 +1582,7 @@ def telegram_test():
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
