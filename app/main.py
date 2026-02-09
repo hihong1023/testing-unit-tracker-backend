@@ -796,16 +796,19 @@ def create_or_update_result(
                     frontend_url = os.getenv("FRONTEND_URL", "").rstrip("/")
                     unit_link = f"{frontend_url}/units/{urllib.parse.quote(unit_id)}" if frontend_url else ""
     
+                    mention = resolve_telegram_mention(next_assign.tester_id)
+                    
                     msg = (
-                        f"🧪 *Next Test Ready*\n\n"
-                        f"*Unit:* `{unit_id}`\n"
-                        f"*From:* {STEP_BY_ID[step_id].name}\n"
-                        f"*Next:* {STEP_BY_ID[next_step_id].name}\n"
-                        f"*Assigned To:* {next_assign.tester_id}\n\n"
-                        f"Previous step PASSED ✅"
+                        "🧪 {unit_id} is Ready for {STEP_BY_ID[next_step_id].name}\n\n"
+                        f"Unit: {unit_id}\n"
+                        f"From: {STEP_BY_ID[step_id].name}\n"
+                        f"Next: {STEP_BY_ID[next_step_id].name}\n"
+                        f"Assigned To: {mention}\n\n"
+                        "Previous step PASSED ✅"
                     )
                     
                     background_tasks.add_task(send_telegram_message, msg)
+
 
                     
 
@@ -1621,6 +1624,7 @@ def telegram_test():
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
