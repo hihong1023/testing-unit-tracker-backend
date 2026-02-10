@@ -809,7 +809,7 @@ def create_or_update_result(
                     
                     msg = (
                         f"{mention}\n\n"
-                        f"✅ **{unit_id} is Ready for {STEP_BY_ID[next_step_id].name}** \n"
+                        f"✅ <b>{unit_id} is ready for {STEP_BY_ID[next_step_id].name}</b>\n"
                         f"✅ {STEP_BY_ID[step_id].name} passed\n\n"
                         f"Date & Time: {now_str}\n"
                         f"Previous tester: {a.tester_id}\n"
@@ -1634,6 +1634,7 @@ def telegram_test():
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
+
 
 
 
