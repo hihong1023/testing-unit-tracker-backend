@@ -147,7 +147,7 @@ PRESET_TESTERS = [
     "jennifer",
 ]
 
-PRESET_SUPERVISORS = ["kian siang", "alban", "hai hong"]
+PRESET_SUPERVISORS = ["kian siang", "alban", "hai hong", "fion"]
 
 # Optional: logical groups of testers
 # (you can adjust this mapping any time)
