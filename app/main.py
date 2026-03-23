@@ -1371,6 +1371,7 @@ def patch_assignment(
     sent_fields = body.__fields_set__
 
     # --- handle skip / unskip logic ---
+    
     if body.skipped is True:
         a.skipped = True
         a.tester_id = None
@@ -1378,11 +1379,9 @@ def patch_assignment(
         a.end_at = None
         a.status = "SKIPPED"
     
-        # 🔥 unlock next valid step(s)
         if a.step_id in STEP_IDS_ORDERED:
             idx = STEP_IDS_ORDERED.index(a.step_id)
     
-            # iterate forward until first non-skipped step
             for next_step_id in STEP_IDS_ORDERED[idx + 1:]:
                 nxt = session.exec(
                     select(Assignment).where(
@@ -1394,101 +1393,64 @@ def patch_assignment(
                 if not nxt:
                     continue
     
-                nxt.prev_passed = True
+                # ✅ safer prev_passed logic
+                if a.skipped or a.status == "PASS":
+                    nxt.prev_passed = True
+                else:
+                    nxt.prev_passed = False
+    
+                # ✅ force visible in queue
+                if nxt.status not in ("PENDING", "RUNNING"):
+                    nxt.status = "PENDING"
+    
                 session.add(nxt)
     
                 if not nxt.skipped:
-                    break  # stop at first active step
+                    break
     
     
-    else:
-        # --- normal updates ---
-        if "tester_id" in sent_fields:
-            a.tester_id = body.tester_id
+    elif body.skipped is False:
+        a.skipped = False
     
-        if "start_at" in sent_fields:
-            a.start_at = body.start_at
+        if a.status == "SKIPPED":
+            a.status = "PENDING"
     
-        if "end_at" in sent_fields:
-            a.end_at = body.end_at
+        if a.step_id in STEP_IDS_ORDERED:
+            idx = STEP_IDS_ORDERED.index(a.step_id)
     
-        if "status" in sent_fields and body.status is not None:
-            a.status = body.status
+            for next_step_id in STEP_IDS_ORDERED[idx + 1:]:
+                nxt = session.exec(
+                    select(Assignment).where(
+                        Assignment.unit_id == a.unit_id,
+                        Assignment.step_id == next_step_id,
+                    )
+                ).first()
     
-        # --- sync PASS / FAIL into Result ---
-        if "status" in sent_fields and body.status in ("PASS", "FAIL"):
-            passed = body.status == "PASS"
+                if not nxt:
+                    continue
     
-            sched_finished = a.end_at or a.start_at or SENTINEL_FINISHED_AT
+                prev_step_id = STEP_IDS_ORDERED[
+                    STEP_IDS_ORDERED.index(nxt.step_id) - 1
+                ]
     
-            r = session.exec(
-                select(Result).where(
-                    Result.unit_id == a.unit_id,
-                    Result.step_id == a.step_id,
-                )
-            ).first()
+                prev_assign = session.exec(
+                    select(Assignment).where(
+                        Assignment.unit_id == a.unit_id,
+                        Assignment.step_id == prev_step_id,
+                    )
+                ).first()
     
-            if r:
-                r.passed = passed
-                if r.finished_at is None and sched_finished is not None:
-                    r.finished_at = sched_finished
-                session.add(r)
-            else:
-                r = Result(
-                    unit_id=a.unit_id,
-                    step_id=a.step_id,
-                    passed=passed,
-                    metrics={},
-                    files=[],
-                    submitted_by=None,
-                    finished_at=sched_finished,
-                )
-                session.add(r)
-    
-            # 🔁 propagate to next step
-            if a.step_id in STEP_IDS_ORDERED:
-                idx = STEP_IDS_ORDERED.index(a.step_id)
-                if idx + 1 < len(STEP_IDS_ORDERED):
-                    next_step_id = STEP_IDS_ORDERED[idx + 1]
-    
-                    nxt = session.exec(
-                        select(Assignment).where(
-                            Assignment.unit_id == a.unit_id,
-                            Assignment.step_id == next_step_id,
-                        )
-                    ).first()
-    
-                    if nxt:
-                        nxt.prev_passed = passed
-                        session.add(nxt)
-    
-        # --- handle un-skip ---
-        if body.skipped is False:
-            a.skipped = False
-    
-            if a.status == "SKIPPED":
-                a.status = "PENDING"
-    
-            # 🔥 re-lock downstream steps (optional but safer)
-            if a.step_id in STEP_IDS_ORDERED:
-                idx = STEP_IDS_ORDERED.index(a.step_id)
-    
-                for next_step_id in STEP_IDS_ORDERED[idx + 1:]:
-                    nxt = session.exec(
-                        select(Assignment).where(
-                            Assignment.unit_id == a.unit_id,
-                            Assignment.step_id == next_step_id,
-                        )
-                    ).first()
-    
-                    if not nxt:
-                        continue
-    
+                if prev_assign and (
+                    prev_assign.skipped or prev_assign.status == "PASS"
+                ):
+                    nxt.prev_passed = True
+                else:
                     nxt.prev_passed = False
-                    session.add(nxt)
     
-                    if not nxt.skipped:
-                        break  # stop at first active step
+                session.add(nxt)
+    
+                if not nxt.skipped:
+                    break
 
     # --- validate overlaps only if NOT skipped ---
     if not a.skipped:
