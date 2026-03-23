@@ -1039,56 +1039,63 @@ def get_tester_assignments(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """
-    List assignments that a tester can see / work on.
-
-    Frontend calls:
-      GET /tester/assignments?tester_id=<name>
-
-    Rules:
-    - Tester can only query their own assignments (tester_id must match login name)
-    - Supervisor can query assignments for any tester
-    - Only steps that are PENDING/RUNNING, whose previous step passed,
-      and that do NOT already have a Result are returned.
-    """
-    # Security: testers may only query themselves
     if user.role == "tester" and user.name != tester_id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    # Load all assignments and results
     assignments = session.exec(select(Assignment)).all()
     results = session.exec(select(Result)).all()
     result_set = {(r.unit_id, r.step_id) for r in results}
 
     visible: List[Assignment] = []
 
-    # 🔹 IDs this tester is allowed to see:
-    #   - their own name (e.g. "yubo")
-    #   - any groups they belong to (e.g. "group:RF")
     tester_groups = groups_for_tester(tester_id)
     visible_ids = {tester_id} | {group_id(g) for g in tester_groups}
 
     for a in assignments:
         status = (a.status or "PENDING").upper()
         has_result = (a.unit_id, a.step_id) in result_set
-    
-        # ❌ hide ONLY if:
-        # - has result
-        # - and not reset to active
+
+        # ❌ hide completed steps
         if has_result and status not in ("PENDING", "RUNNING"):
             continue
-    
-        # previous step must be passed
-        if not a.prev_passed:
+
+        # ❌ hide skipped steps
+        if a.skipped:
             continue
-    
+
+        # 🔥 correct previous-step logic (supports multi-skip)
+        if a.step_id in STEP_IDS_ORDERED:
+            idx = STEP_IDS_ORDERED.index(a.step_id)
+
+            for prev_idx in range(idx - 1, -1, -1):
+                prev_step_id = STEP_IDS_ORDERED[prev_idx]
+
+                prev = session.exec(
+                    select(Assignment).where(
+                        Assignment.unit_id == a.unit_id,
+                        Assignment.step_id == prev_step_id,
+                    )
+                ).first()
+
+                if not prev:
+                    continue
+
+                if prev.skipped:
+                    continue
+
+                if prev.status != "PASS":
+                    break
+
+                break
+            else:
+                continue
+
         # tester visibility
         if a.tester_id is not None and a.tester_id not in visible_ids:
             continue
-    
+
         visible.append(a)
-        
-    # Sort nicely for UI: by unit, then by step order
+
     visible.sort(key=lambda x: (x.unit_id, STEP_BY_ID[x.step_id].order))
     return visible
 
@@ -1377,8 +1384,6 @@ def patch_assignment(
     if "end_at" in sent_fields:
         a.end_at = body.end_at
     
-    if "status" in sent_fields:
-        a.status = body.status
         
     # --- handle skip / unskip logic ---
     
