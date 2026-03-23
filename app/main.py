@@ -1069,36 +1069,25 @@ def get_tester_assignments(
     visible_ids = {tester_id} | {group_id(g) for g in tester_groups}
 
     for a in assignments:
-        # ignore completed steps
         status = (a.status or "PENDING").upper()
-        
-        if status not in ("PENDING", "RUNNING"):
+        has_result = (a.unit_id, a.step_id) in result_set
+    
+        # ❌ hide ONLY if:
+        # - has result
+        # - and not reset to active
+        if has_result and status not in ("PENDING", "RUNNING"):
             continue
-            
-        # Only hide if step is already finished AND not reset
-        if (a.unit_id, a.step_id) in result_set:
-            r = next(
-                (x for x in results if x.unit_id == a.unit_id and x.step_id == a.step_id),
-                None
-            )
-        
-            # 🔥 allow re-show if assignment is PENDING again
-            if r and a.status not in ("PENDING", "RUNNING"):
-                continue
-
+    
         # previous step must be passed
         if not a.prev_passed:
             continue
-
-        # tester can see:
-        # - unassigned steps (tester_id is None)
-        # - steps assigned directly to them ("yubo")
-        # - steps assigned to one of their groups ("group:RF")
+    
+        # tester visibility
         if a.tester_id is not None and a.tester_id not in visible_ids:
             continue
-
+    
         visible.append(a)
-
+        
     # Sort nicely for UI: by unit, then by step order
     visible.sort(key=lambda x: (x.unit_id, STEP_BY_ID[x.step_id].order))
     return visible
@@ -1389,6 +1378,18 @@ def patch_assignment(
         a.end_at = None
         a.status = "SKIPPED"
     
+        # 🔥 1. REMOVE RESULT FOR CURRENT STEP
+        curr_result = session.exec(
+            select(Result).where(
+                Result.unit_id == a.unit_id,
+                Result.step_id == a.step_id,
+            )
+        ).first()
+    
+        if curr_result:
+            session.delete(curr_result)
+    
+        # 🔥 2. UNLOCK NEXT STEP(S)
         if a.step_id in STEP_IDS_ORDERED:
             idx = STEP_IDS_ORDERED.index(a.step_id)
     
@@ -1403,16 +1404,16 @@ def patch_assignment(
                 if not nxt:
                     continue
     
-                # ✅ unlock
+                # ✅ unlock step
                 nxt.prev_passed = True
     
-                # ✅ reset status
+                # ✅ force visible
                 nxt.status = "PENDING"
     
-                # ✅ allow queue visibility
+                # ✅ allow tester to pick
                 nxt.tester_id = None
     
-                # 🔥 CRITICAL: remove old result
+                # 🔥 3. REMOVE RESULT FOR NEXT STEP
                 old_result = session.exec(
                     select(Result).where(
                         Result.unit_id == nxt.unit_id,
@@ -1425,6 +1426,7 @@ def patch_assignment(
     
                 session.add(nxt)
     
+                # stop at first active step
                 if not nxt.skipped:
                     break
     
