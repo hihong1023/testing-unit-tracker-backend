@@ -1070,12 +1070,21 @@ def get_tester_assignments(
 
     for a in assignments:
         # ignore completed steps
-        if a.status not in ("PENDING", "RUNNING"):
+        status = (a.status or "PENDING").upper()
+        
+        if status not in ("PENDING", "RUNNING"):
             continue
-
-        # ignore steps that already have a result
+            
+        # Only hide if step is already finished AND not reset
         if (a.unit_id, a.step_id) in result_set:
-            continue
+            r = next(
+                (x for x in results if x.unit_id == a.unit_id and x.step_id == a.step_id),
+                None
+            )
+        
+            # 🔥 allow re-show if assignment is PENDING again
+            if r and a.status not in ("PENDING", "RUNNING"):
+                continue
 
         # previous step must be passed
         if not a.prev_passed:
@@ -1372,6 +1381,7 @@ def patch_assignment(
 
     # --- handle skip / unskip logic ---
     
+
     if body.skipped is True:
         a.skipped = True
         a.tester_id = None
@@ -1393,21 +1403,30 @@ def patch_assignment(
                 if not nxt:
                     continue
     
-                # ✅ safer prev_passed logic
-                if a.skipped or a.status == "PASS":
-                    nxt.prev_passed = True
-                else:
-                    nxt.prev_passed = False
+                # ✅ unlock
+                nxt.prev_passed = True
     
-                # ✅ force visible in queue
-                if nxt.status not in ("PENDING", "RUNNING"):
-                    nxt.status = "PENDING"
+                # ✅ reset status
+                nxt.status = "PENDING"
+    
+                # ✅ allow queue visibility
+                nxt.tester_id = None
+    
+                # 🔥 CRITICAL: remove old result
+                old_result = session.exec(
+                    select(Result).where(
+                        Result.unit_id == nxt.unit_id,
+                        Result.step_id == nxt.step_id,
+                    )
+                ).first()
+    
+                if old_result:
+                    session.delete(old_result)
     
                 session.add(nxt)
     
                 if not nxt.skipped:
                     break
-    
     
     elif body.skipped is False:
         a.skipped = False
