@@ -1370,54 +1370,70 @@ def patch_assignment(
 
     sent_fields = body.__fields_set__
 
-    # --- if skipping, clear tester & dates and mark status ---
+    # --- handle skip / unskip logic ---
     if body.skipped is True:
         a.skipped = True
         a.tester_id = None
         a.start_at = None
         a.end_at = None
         a.status = "SKIPPED"
+    
+        # 🔥 unlock next valid step(s)
+        if a.step_id in STEP_IDS_ORDERED:
+            idx = STEP_IDS_ORDERED.index(a.step_id)
+    
+            # iterate forward until first non-skipped step
+            for next_step_id in STEP_IDS_ORDERED[idx + 1:]:
+                nxt = session.exec(
+                    select(Assignment).where(
+                        Assignment.unit_id == a.unit_id,
+                        Assignment.step_id == next_step_id,
+                    )
+                ).first()
+    
+                if not nxt:
+                    continue
+    
+                nxt.prev_passed = True
+                session.add(nxt)
+    
+                if not nxt.skipped:
+                    break  # stop at first active step
+    
+    
     else:
-        # ✅ explicit updates (including None to clear)
+        # --- normal updates ---
         if "tester_id" in sent_fields:
-            a.tester_id = body.tester_id  # None → unassign
-
+            a.tester_id = body.tester_id
+    
         if "start_at" in sent_fields:
-            a.start_at = body.start_at    # None → clear
-
+            a.start_at = body.start_at
+    
         if "end_at" in sent_fields:
-            a.end_at = body.end_at        # None → clear
-
-        prev_status = a.status
+            a.end_at = body.end_at
+    
         if "status" in sent_fields and body.status is not None:
             a.status = body.status
-
-        # --- sync PASS / FAIL into Result + next.prev_passed ---
+    
+        # --- sync PASS / FAIL into Result ---
         if "status" in sent_fields and body.status in ("PASS", "FAIL"):
             passed = body.status == "PASS"
-        
-            # ✅ Scheduler date source (may be None)
+    
             sched_finished = a.end_at or a.start_at or SENTINEL_FINISHED_AT
-        
+    
             r = session.exec(
                 select(Result).where(
                     Result.unit_id == a.unit_id,
                     Result.step_id == a.step_id,
                 )
             ).first()
-        
+    
             if r:
                 r.passed = passed
-        
-                # ✅ DO NOT force a date
-                # ✅ Only fill finished_at if it is currently empty AND scheduler has a date
-                # (Upload result should remain higher priority because it sets finished_at explicitly)
                 if r.finished_at is None and sched_finished is not None:
                     r.finished_at = sched_finished
-        
                 session.add(r)
             else:
-                # ✅ create result but finished_at stays None if no scheduler dates
                 r = Result(
                     unit_id=a.unit_id,
                     step_id=a.step_id,
@@ -1425,31 +1441,54 @@ def patch_assignment(
                     metrics={},
                     files=[],
                     submitted_by=None,
-                    finished_at=sched_finished,  # ✅ can be None
+                    finished_at=sched_finished,
                 )
                 session.add(r)
-        
-            # propagate prev_passed to next step (keep your existing code)
+    
+            # 🔁 propagate to next step
             if a.step_id in STEP_IDS_ORDERED:
                 idx = STEP_IDS_ORDERED.index(a.step_id)
                 if idx + 1 < len(STEP_IDS_ORDERED):
                     next_step_id = STEP_IDS_ORDERED[idx + 1]
+    
                     nxt = session.exec(
                         select(Assignment).where(
                             Assignment.unit_id == a.unit_id,
                             Assignment.step_id == next_step_id,
                         )
                     ).first()
+    
                     if nxt:
                         nxt.prev_passed = passed
                         session.add(nxt)
-
-
-        # if un-skipping
+    
+        # --- handle un-skip ---
         if body.skipped is False:
             a.skipped = False
+    
             if a.status == "SKIPPED":
                 a.status = "PENDING"
+    
+            # 🔥 re-lock downstream steps (optional but safer)
+            if a.step_id in STEP_IDS_ORDERED:
+                idx = STEP_IDS_ORDERED.index(a.step_id)
+    
+                for next_step_id in STEP_IDS_ORDERED[idx + 1:]:
+                    nxt = session.exec(
+                        select(Assignment).where(
+                            Assignment.unit_id == a.unit_id,
+                            Assignment.step_id == next_step_id,
+                        )
+                    ).first()
+    
+                    if not nxt:
+                        continue
+    
+                    nxt.prev_passed = False
+                    session.add(nxt)
+    
+                    if not nxt.skipped:
+                        break  # stop at first active step
 
     # --- validate overlaps only if NOT skipped ---
     if not a.skipped:
