@@ -1367,18 +1367,27 @@ def patch_assignment(
         raise HTTPException(status_code=404, detail="Assignment not found")
 
     sent_fields = body.__fields_set__
-
+    # 🔥 APPLY PATCH VALUES FIRST
+    if "tester_id" in sent_fields:
+        a.tester_id = body.tester_id
+    
+    if "start_at" in sent_fields:
+        a.start_at = body.start_at
+    
+    if "end_at" in sent_fields:
+        a.end_at = body.end_at
+    
+    if "status" in sent_fields:
+        a.status = body.status
+        
     # --- handle skip / unskip logic ---
     
 
     if body.skipped is True:
         a.skipped = True
-        a.tester_id = None
-        a.start_at = None
-        a.end_at = None
         a.status = "SKIPPED"
     
-        # 🔥 1. REMOVE RESULT FOR CURRENT STEP
+        # ✅ ONLY remove result for THIS step (optional but OK)
         curr_result = session.exec(
             select(Result).where(
                 Result.unit_id == a.unit_id,
@@ -1389,7 +1398,12 @@ def patch_assignment(
         if curr_result:
             session.delete(curr_result)
     
-        # 🔥 2. UNLOCK NEXT STEP(S)
+        # ✅ DO NOT TOUCH:
+        # a.tester_id ❌
+        # a.start_at ❌
+        # a.end_at ❌
+    
+        # 🔥 unlock next step
         if a.step_id in STEP_IDS_ORDERED:
             idx = STEP_IDS_ORDERED.index(a.step_id)
     
@@ -1404,29 +1418,15 @@ def patch_assignment(
                 if not nxt:
                     continue
     
-                # ✅ unlock step
+                # ✅ ONLY THIS
                 nxt.prev_passed = True
     
-                # ✅ force visible
-                nxt.status = "PENDING"
-    
-                # ✅ allow tester to pick
-                nxt.tester_id = None
-    
-                # 🔥 3. REMOVE RESULT FOR NEXT STEP
-                old_result = session.exec(
-                    select(Result).where(
-                        Result.unit_id == nxt.unit_id,
-                        Result.step_id == nxt.step_id,
-                    )
-                ).first()
-    
-                if old_result:
-                    session.delete(old_result)
+                # ✅ only fix status if invalid
+                if not nxt.status or nxt.status == "SKIPPED":
+                    nxt.status = "PENDING"
     
                 session.add(nxt)
     
-                # stop at first active step
                 if not nxt.skipped:
                     break
     
