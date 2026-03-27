@@ -1063,32 +1063,41 @@ def get_tester_assignments(
         if a.skipped:
             continue
 
-        # 🔥 correct previous-step logic (supports multi-skip)
+        # 🔥 correct previous-step logic (FIXED)
         if a.step_id in STEP_IDS_ORDERED:
             idx = STEP_IDS_ORDERED.index(a.step_id)
-
-            for prev_idx in range(idx - 1, -1, -1):
-                prev_step_id = STEP_IDS_ORDERED[prev_idx]
-
-                prev = session.exec(
-                    select(Assignment).where(
-                        Assignment.unit_id == a.unit_id,
-                        Assignment.step_id == prev_step_id,
-                    )
-                ).first()
-
-                if not prev:
-                    continue
-
-                if prev.skipped:
-                    continue
-
-                if prev.status != "PASS":
-                    break
-
-                break
+        
+            # ✅ FIRST STEP → ALWAYS VISIBLE
+            if idx == 0:
+                pass
             else:
-                continue
+                unlocked = False
+        
+                for prev_idx in range(idx - 1, -1, -1):
+                    prev_step_id = STEP_IDS_ORDERED[prev_idx]
+        
+                    prev = session.exec(
+                        select(Assignment).where(
+                            Assignment.unit_id == a.unit_id,
+                            Assignment.step_id == prev_step_id,
+                        )
+                    ).first()
+        
+                    if not prev:
+                        continue
+        
+                    if prev.skipped:
+                        continue
+        
+                    if prev.status == "PASS":
+                        unlocked = True
+                        break
+                    else:
+                        unlocked = False
+                        break
+        
+                if not unlocked:
+                    continue
 
         # tester visibility
         if a.tester_id is not None and a.tester_id not in visible_ids:
