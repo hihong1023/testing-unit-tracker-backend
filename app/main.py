@@ -182,6 +182,7 @@ TELEGRAM_USERNAMES = {
     "ge fan": "@hihong1023",
     "jimmy": "@hihong1023",
     "kae": "@hihong1023",
+    "kin pang": "@hihong1023",
     "krishnan": "@hihong1023",
     "nicholas": "@hihong1023",
     "sunny": "@hihong1023",
