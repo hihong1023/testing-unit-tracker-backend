@@ -137,7 +137,7 @@ PRESET_TESTERS = [
     "ge fan",
     "jimmy",
     "kae",
-    “kin pang”,
+    "kin pang",
     "krishnan",   # use whichever spelling you actually want
     "nicholas",
     "sunny",
@@ -156,7 +156,7 @@ PRESET_TESTER_GROUPS: Dict[str, List[str]] = {
     "Physical Layer": [
         "sunny",
         "zhen yang",
-        “kin pang”,
+        "kin pang",
         
     ],
     "Reliability": [
