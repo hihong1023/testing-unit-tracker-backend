@@ -168,7 +168,7 @@ PRESET_TESTER_GROUPS: Dict[str, List[str]] = {
     "OAT":[
         "krishnan",
         "sook huy",
-        # "revathi",
+        "revathi",
     ],
 }
 
