@@ -138,12 +138,11 @@ PRESET_TESTERS = [
     "jimmy",
     "kae",
     "kin pang",
-    "krishnan", 
+    "krishnan",   # use whichever spelling you actually want
     "nicholas",
-    "revathi",
     "sunny",
     "yew meng",
-    "yubo",      
+    "yubo",       # <-- this one will be "individual only"
     "zhen yang",
     "sook huy",
     "jennifer",
@@ -158,19 +157,17 @@ PRESET_TESTER_GROUPS: Dict[str, List[str]] = {
         "sunny",
         "zhen yang",
         "kin pang",
-        "revathi",
+        
     ],
-    
     "Reliability": [
         "brian",
-        "yew meng",
         "nicholas",
+        "yew meng",
     ],
 
     "OAT":[
         "krishnan",
         "sook huy",
-        "revathi",
     ],
 }
 
@@ -187,13 +184,12 @@ TELEGRAM_USERNAMES = {
     "kae": "@hihong1023",
     "kin pang": "@hihong1023",
     "krishnan": "@hihong1023",
-    "revathi": "@hihong1023",
+    "nicholas": "@hihong1023",
     "sunny": "@hihong1023",
     "yew meng": "@hihong1023",
     "yubo": "@hihong1023",  
     "zhen yang": "@hihong1023",
     "sook huy": "@hihong1023",
-    "nicholas": "@hihong1023",
 
 }
 
@@ -1677,8 +1673,6 @@ def telegram_test():
 @app.get("/")
 def root():
     return {"message": "Testing Unit Tracker API running"}
-
-
 
 
 
