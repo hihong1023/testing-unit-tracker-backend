@@ -139,7 +139,7 @@ PRESET_TESTERS = [
     "kae",
     "kin pang",
     "krishnan",   # use whichever spelling you actually want
-    "nicholas",
+    "revathi",
     "sunny",
     "yew meng",
     "yubo",       # <-- this one will be "individual only"
@@ -157,17 +157,18 @@ PRESET_TESTER_GROUPS: Dict[str, List[str]] = {
         "sunny",
         "zhen yang",
         "kin pang",
+        "revathi",
         
     ],
     "Reliability": [
         "brian",
-        "nicholas",
         "yew meng",
     ],
 
     "OAT":[
         "krishnan",
         "sook huy",
+        "revathi",
     ],
 }
 
@@ -184,7 +185,7 @@ TELEGRAM_USERNAMES = {
     "kae": "@hihong1023",
     "kin pang": "@hihong1023",
     "krishnan": "@hihong1023",
-    "nicholas": "@hihong1023",
+    "revathi": "@hihong1023",
     "sunny": "@hihong1023",
     "yew meng": "@hihong1023",
     "yubo": "@hihong1023",  
