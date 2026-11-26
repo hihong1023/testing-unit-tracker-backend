@@ -1138,34 +1138,40 @@ def get_tester_schedule(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """
-    Full schedule view for a tester.
-
-    Used by 'Upcoming Tests (Tester)' page.
-    Shows ALL assignments assigned:
-      - directly to this tester
-      - or to any group they belong to
-    """
-
     # Security: testers may only query themselves
     if user.role == "tester" and user.name != tester_id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     tester_groups = groups_for_tester(tester_id)
-    visible_ids = {tester_id} | {group_id(g) for g in tester_groups}
+    visible_ids = {tester_id} | {
+        group_id(g) for g in tester_groups
+    }
 
-    # load all assignments, then filter by tester_id
     assignments = session.exec(select(Assignment)).all()
-    assignments = [a for a in assignments if a.tester_id in visible_ids]
 
-    # Sort nicely: by start date, then unit, then step order
+    assignments = [
+        a for a in assignments
+        if a.tester_id in visible_ids
+    ]
+
+    # Normalize datetime values for sorting
+    def normalize_datetime(dt):
+        if dt is None:
+            return datetime.max.replace(tzinfo=timezone.utc)
+
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+
+        return dt.astimezone(timezone.utc)
+
     assignments.sort(
         key=lambda a: (
-            a.start_at or datetime.max,
+            normalize_datetime(a.start_at),
             a.unit_id,
             STEP_BY_ID[a.step_id].order,
         )
     )
+
     return assignments
 
 # =====================================================
