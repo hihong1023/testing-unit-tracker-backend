@@ -113,19 +113,29 @@ async def get_current_user(
     token_row = session.get(Token, token_str)
 
     if not token_row:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token"
+        )
 
     issued_at = token_row.issued_at
-    
+
     if issued_at.tzinfo is None:
         issued_at = issued_at.replace(tzinfo=timezone.utc)
-    
+
     if datetime.now(timezone.utc) - issued_at > TOKEN_TTL:
         session.delete(token_row)
         session.commit()
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(
+            status_code=401,
+            detail="Token expired"
+        )
 
-    return User(id=token_row.user_id, name=token_row.name, role=token_row.role)
+    return User(
+        id=token_row.user_id,
+        name=token_row.name,
+        role=token_row.role
+    )
 
 def require_role(required_role: str):
     async def dep(user: User = Depends(get_current_user)) -> User:
