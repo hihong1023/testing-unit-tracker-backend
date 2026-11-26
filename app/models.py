@@ -1,6 +1,6 @@
 # app/models.py
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlmodel import SQLModel, Field, Column, JSON
 from uuid import uuid4
 
@@ -16,7 +16,9 @@ class Token(SQLModel, table=True):
     user_id: str
     name: str
     role: str
-    issued_at: datetime = Field(default_factory=datetime.utcnow)
+    issued_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
 
 # ---------- STEPS (still static, no table needed) ----------
@@ -91,13 +93,19 @@ class FileMeta(SQLModel, table=True):
 
 
 class Notification(SQLModel, table=True):
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        primary_key=True
+    )
     tester_id: str = Field(index=True)
     unit_id: str = Field(index=True, foreign_key="unit.id")
     from_step_id: int
     to_step_id: int
     message: str
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        index=True
+    )
     read: bool = False
 
 
