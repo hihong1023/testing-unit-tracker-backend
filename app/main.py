@@ -115,7 +115,12 @@ async def get_current_user(
     if not token_row:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    if datetime.utcnow() - token_row.issued_at > TOKEN_TTL:
+    issued_at = token_row.issued_at
+    
+    if issued_at.tzinfo is None:
+        issued_at = issued_at.replace(tzinfo=timezone.utc)
+    
+    if datetime.now(timezone.utc) - issued_at > TOKEN_TTL:
         session.delete(token_row)
         session.commit()
         raise HTTPException(status_code=401, detail="Token expired")
@@ -267,6 +272,7 @@ def login(body: LoginRequest, session: Session = Depends(get_session)):
         user_id=user.id,
         name=user.name,
         role=user.role,
+        issued_at=datetime.now(timezone.utc),
     )
     session.add(token_row)
     session.commit()
